@@ -1,0 +1,57 @@
+From 1141f05fb7ea93a79990ebb226bc38c83bbb4a56 Mon Sep 17 00:00:00 2001
+From: Nils Wistoff <nwistoff@iis.ee.ethz.ch>
+Date: Mon, 4 Dec 2023 19:12:28 +0100
+Subject: [PATCH 03/24] regs: Make mrvbr writeable
+
+Signed-off-by: Nils Wistoff <nwistoff@iis.ee.ethz.ch>
+---
+ C910_RTL_FACTORY/gen_rtl/cp0/rtl/ct_cp0_regs.v | 5 ++++-
+ smart_run/logical/common/cpu_sub_system_axi.v  | 2 +-
+ 2 files changed, 5 insertions(+), 2 deletions(-)
+
+diff --git a/C910_RTL_FACTORY/gen_rtl/cp0/rtl/ct_cp0_regs.v b/C910_RTL_FACTORY/gen_rtl/cp0/rtl/ct_cp0_regs.v
+index bdc078b..e5e4425 100644
+--- a/C910_RTL_FACTORY/gen_rtl/cp0/rtl/ct_cp0_regs.v
++++ b/C910_RTL_FACTORY/gen_rtl/cp0/rtl/ct_cp0_regs.v
+@@ -1418,7 +1418,7 @@ assign mcntwen_local_en  = iui_regs_sel && iui_regs_addr[11:0] == MCNTWEN;
+ assign mccr2_local_en    = iui_regs_addr[11:0] == MCCR2;      
+ assign mcer2_local_en    = iui_regs_addr[11:0] == MCER2;     
+ //assign mrmr_local_en     = iui_regs_addr[11:0] == MRMR;
+-//assign mrvbr_local_en    = iui_regs_addr[11:0] == MRVBR;
++assign mrvbr_local_en    = iui_regs_addr[11:0] == MRVBR;
+ assign meicr2_local_en   = iui_regs_addr[11:0] == MEICR2;
+ 
+ assign mcins_local_en    = iui_regs_sel && iui_regs_addr[11:0] == MCINS;       
+@@ -3059,6 +3059,8 @@ begin
+     mrvbr_reg[38:0] <= 39'b0; 
+   else if(rst_sample)
+     mrvbr_reg[38:0] <= biu_cp0_rvba[39:1];
++  else if(mrvbr_local_en)
++    mrvbr_reg[38:0] <= iui_regs_src0[39:1];
+   else
+     mrvbr_reg[38:0] <= mrvbr_reg[38:0];
+ end
+@@ -3826,6 +3828,7 @@ assign hpm_regs_sel = iui_regs_addr[11:8] == 4'hB  // Machine Counters/Timers
+ 
+ assign l2_regs_sel  = mccr2_local_en || mcer2_local_en 
+ //                   || mrmr_local_en  || mrvbr_local_en
++                   || mrvbr_local_en
+                    || regs_dca_sel
+                    || msmpr_local_en  || mteecfg_local_en && !(tee_lock && iui_regs_csr_wr)
+                    || meicr2_local_en || scer2_local_en || mhint4_local_en;
+diff --git a/smart_run/logical/common/cpu_sub_system_axi.v b/smart_run/logical/common/cpu_sub_system_axi.v
+index 278fc02..6041fb7 100644
+--- a/smart_run/logical/common/cpu_sub_system_axi.v
++++ b/smart_run/logical/common/cpu_sub_system_axi.v
+@@ -227,7 +227,7 @@ rv_integration_platform  x_rv_integration_platform (
+     .pad_cpu_apb_base                             (`APB_BASE_ADDR                           ),
+     .pad_cpu_l2cache_flush_req                    (1'b0                                     ),
+     .pad_cpu_rst_b                                (pad_cpu_rst_b                            ),
+-    .pad_core0_rvba                               (40'b0                                    ),
++    .pad_core0_rvba                               (40'b0                                    ), // Reset vector base address
+     .pad_cpu_sys_cnt                              (pad_cpu_sys_cnt                          ),
+     .pad_had_jtg_tclk                             (pad_had_jtg_tclk                         ),
+     .pad_had_jtg_tdi                              (pad_had_jtg_tdi                          ),
+-- 
+2.39.3
+

@@ -1,0 +1,49 @@
+From 77ab422d8c8e60d80b322dcd25486711dfacbd01 Mon Sep 17 00:00:00 2001
+From: Nils Wistoff <nwistoff@iis.ee.ethz.ch>
+Date: Mon, 4 Dec 2023 12:38:09 +0100
+Subject: [PATCH 08/24] sync: Prefix module name
+
+to avoid name collision
+---
+ smart_run/logical/pmu/pmu.v  | 4 ++--
+ smart_run/logical/pmu/sync.v | 2 +-
+ 2 files changed, 3 insertions(+), 3 deletions(-)
+
+diff --git a/smart_run/logical/pmu/pmu.v b/smart_run/logical/pmu/pmu.v
+index d17a255..fd41d20 100644
+--- a/smart_run/logical/pmu/pmu.v
++++ b/smart_run/logical/pmu/pmu.v
+@@ -177,7 +177,7 @@ assign lpmd_en = (biu_pad_lpmd_b[1:0] != 2'b11) ;
+ 
+ ////////////sync /////////////////////
+ // &Instance("sync", "x_cpu2pmu_sync1"); @58
+-sync  x_cpu2pmu_sync1 (
++thead_sync  x_cpu2pmu_sync1 (
+   .fast_clk      (cpu_clk      ),
+   .in            (lpmd_en      ),
+   .out           (lpmd_en_ff   ),
+@@ -192,7 +192,7 @@ sync  x_cpu2pmu_sync1 (
+ //          ); @63
+ 
+ // &Instance("sync", "x_cpu2pmu_sync2"); @69
+-sync  x_cpu2pmu_sync2 (
++thead_sync  x_cpu2pmu_sync2 (
+   .fast_clk          (cpu_clk          ),
+   .in                (low_power_dis_pre),
+   .out               (low_power_dis    ),
+diff --git a/smart_run/logical/pmu/sync.v b/smart_run/logical/pmu/sync.v
+index df6b342..651a1a5 100644
+--- a/smart_run/logical/pmu/sync.v
++++ b/smart_run/logical/pmu/sync.v
+@@ -32,7 +32,7 @@ limitations under the License.
+ 
+ 
+ // &ModuleBeg; @20
+-module sync(
++module thead_sync(
+   fast_clk,
+   in,
+   out,
+-- 
+2.39.3
+

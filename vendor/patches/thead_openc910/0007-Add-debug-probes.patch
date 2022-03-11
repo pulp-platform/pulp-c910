@@ -1,0 +1,115 @@
+From 4e16563952ef505415ebf18c03546e6b86fec246 Mon Sep 17 00:00:00 2001
+From: Nils Wistoff <nwistoff@iis.ee.ethz.ch>
+Date: Mon, 4 Dec 2023 12:34:37 +0100
+Subject: [PATCH 07/24] Add debug probes
+
+---
+ C910_RTL_FACTORY/gen_rtl/cp0/rtl/ct_cp0_regs.v     | 12 ++++++------
+ C910_RTL_FACTORY/gen_rtl/cpu/rtl/ct_top.v          |  2 +-
+ smart_run/logical/common/rv_integration_platform.v | 14 +++++++-------
+ 3 files changed, 14 insertions(+), 14 deletions(-)
+
+diff --git a/C910_RTL_FACTORY/gen_rtl/cp0/rtl/ct_cp0_regs.v b/C910_RTL_FACTORY/gen_rtl/cp0/rtl/ct_cp0_regs.v
+index 178dbe5..89c045b 100644
+--- a/C910_RTL_FACTORY/gen_rtl/cp0/rtl/ct_cp0_regs.v
++++ b/C910_RTL_FACTORY/gen_rtl/cp0/rtl/ct_cp0_regs.v
+@@ -567,7 +567,7 @@ reg              ssip_reg;
+ reg              stie;                           
+ reg              stie_deleg;                     
+ reg              stip_reg;                       
+-reg     [63 :0]  stval_data;                     
++(* mark_debug = "true" *) reg     [63 :0]  stval_data;                     
+ reg     [61 :0]  stvec_base;                     
+ reg     [1  :0]  stvec_mode;                     
+ reg              sum;                            
+@@ -817,7 +817,7 @@ wire             lsu_cp0_dcache_read_data_vld;
+ wire    [63 :0]  mapbaddr_value;                 
+ wire    [63 :0]  marchid_value;                  
+ wire             mcause_local_en;                
+-wire    [63 :0]  mcause_value;                   
++(* mark_debug = "true" *) wire    [63 :0]  mcause_value;                   
+ wire             mccr2_local_en;                 
+ wire    [63 :0]  mcdata0_value;                  
+ wire    [63 :0]  mcdata1_value;                  
+@@ -853,7 +853,7 @@ wire             meip;
+ wire             meip_en;                        
+ wire             meip_vld;                       
+ wire             mepc_local_en;                  
+-wire    [63 :0]  mepc_value;                     
++(* mark_debug = "true" *) wire    [63 :0]  mepc_value;                     
+ wire    [63 :0]  mhartid_value;                  
+ wire             mhcr_local_en;                  
+ wire    [63 :0]  mhcr_value;                     
+@@ -909,7 +909,7 @@ wire             mtip_en;
+ wire             mtip_vld;                       
+ wire             mtval_local_en;                 
+ wire    [63 :0]  mtval_upd_data;                 
+-wire    [63 :0]  mtval_value;                    
++(* mark_debug = "true" *) wire    [63 :0]  mtval_value;                    
+ wire             mtvec_local_en;                 
+ wire    [63 :0]  mtvec_value;                    
+ wire    [63 :0]  mvendorid_value;                
+@@ -971,7 +971,7 @@ wire    [5  :0]  rtu_yy_xx_expt_vec;
+ wire             rtu_yy_xx_flush;                
+ wire             satp_local_en;                  
+ wire             scause_local_en;                
+-wire    [63 :0]  scause_value;                   
++(* mark_debug = "true" *) wire    [63 :0]  scause_value;                   
+ wire             scer2_local_en;                 
+ wire    [63 :0]  scer_value;                     
+ wire    [2  :0]  sck;                            
+@@ -987,7 +987,7 @@ wire             seip_en;
+ wire             seip_nodeleg_vld;               
+ wire             seip_upd_val;                   
+ wire             sepc_local_en;                  
+-wire    [63 :0]  sepc_value;                     
++(* mark_debug = "true" *) wire    [63 :0]  sepc_value;                     
+ wire    [63 :0]  shcr_value;                     
+ wire             shpmcr_local_en;                
+ wire             sie_local_en;                   
+diff --git a/C910_RTL_FACTORY/gen_rtl/cpu/rtl/ct_top.v b/C910_RTL_FACTORY/gen_rtl/cpu/rtl/ct_top.v
+index e0b344f..57e2b26 100644
+--- a/C910_RTL_FACTORY/gen_rtl/cpu/rtl/ct_top.v
++++ b/C910_RTL_FACTORY/gen_rtl/cpu/rtl/ct_top.v
+@@ -481,7 +481,7 @@ wire             idu_hpcp_rf_pipe7_inst_vld;
+ wire             idu_hpcp_rf_pipe7_lch_fail_vld;      
+ wire             idu_rst_b;                           
+ wire             idu_arch_rst_b;
+-wire             pipe4_fencet;
++(* mark_debug = "true" *) wire             pipe4_fencet;
+ wire             ifu_biu_r_ready;                     
+ wire    [39 :0]  ifu_biu_rd_addr;                     
+ wire    [1  :0]  ifu_biu_rd_burst;                    
+diff --git a/smart_run/logical/common/rv_integration_platform.v b/smart_run/logical/common/rv_integration_platform.v
+index b4fa707..95ba1cc 100644
+--- a/smart_run/logical/common/rv_integration_platform.v
++++ b/smart_run/logical/common/rv_integration_platform.v
+@@ -293,18 +293,18 @@ wire                   biu_pad_wvalid                           ;
+ wire       [1 : 0]     core0_pad_jdb_pm                         ;
+ wire       [1 : 0]     core0_pad_lpmd_b                         ;
+ wire       [63 : 0]    core0_pad_mstatus                        ;
+-wire                   core0_pad_retire0                        ;
+-wire       [39 : 0]    core0_pad_retire0_pc                     ;
+-wire                   core0_pad_retire1                        ;
+-wire       [39 : 0]    core0_pad_retire1_pc                     ;
+-wire                   core0_pad_retire2                        ;
+-wire       [39 : 0]    core0_pad_retire2_pc                     ;
++(* mark_debug = "true" *) wire                   core0_pad_retire0                        ;
++(* mark_debug = "true" *) wire       [39 : 0]    core0_pad_retire0_pc                     ;
++(* mark_debug = "true" *) wire                   core0_pad_retire1                        ;
++(* mark_debug = "true" *) wire       [39 : 0]    core0_pad_retire1_pc                     ;
++(* mark_debug = "true" *) wire                   core0_pad_retire2                        ;
++(* mark_debug = "true" *) wire       [39 : 0]    core0_pad_retire2_pc                     ;
+ wire                   cpu_pad_l2cache_flush_done               ;
+ wire                   cpu_pad_no_op                            ;
+ wire                   had_pad_jtg_tdo                          ;
+ wire                   had_pad_jtg_tdo_en                       ;
+ 
+-wire                   cpu_debug_port                           ;
++(* mark_debug = "true" *) wire                   cpu_debug_port                           ;
+ 
+ 
+ 
+-- 
+2.39.3
+
