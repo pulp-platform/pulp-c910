@@ -407,7 +407,7 @@ axi_interconnect128  x_axi_interconnect (
   .wvalid_s3        (wvalid_s3       )
 );
 
-axi_fifo  x_axi_fifo (
+axi_fifo_c910  x_axi_fifo (
   .biu_pad_araddr   (biu_pad_araddr  ),
   .biu_pad_arburst  (biu_pad_arburst ),
   .biu_pad_arcache  (biu_pad_arcache ),

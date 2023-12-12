@@ -1,0 +1,1055 @@
+From 99b0ad058f3d9a07b8d842e3d504dc9ae84186c7 Mon Sep 17 00:00:00 2001
+From: Zexin Fu <zexifu@iis.ee.ethz.ch>
+Date: Thu, 1 May 2025 16:35:37 +0200
+Subject: [PATCH 23/24] Increase LFB buffer capacity for heavy memory
+ transactions.
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Heavy memory transactions can trigger an overflow in the Line Fill Buffer (LFB) and deadlock the core due to more than two interleaved read responses on a non-standard AXI-ACE interface. Increase the LFB data buffer capacity by making it configurable to match the core’s outstanding memory transactions, thereby eliminating core deadlock under intensive memory access conditions.
+---
+ C910_RTL_FACTORY/gen_rtl/cpu/rtl/ct_core.v    |   8 +-
+ C910_RTL_FACTORY/gen_rtl/cpu/rtl/ct_top.v     |   6 +-
+ .../gen_rtl/had/rtl/ct_had_dbg_info.v         |  22 +-
+ .../gen_rtl/had/rtl/ct_had_private_top.v      |   8 +-
+ .../gen_rtl/lsu/rtl/ct_lsu_ctrl.v             |  18 +-
+ C910_RTL_FACTORY/gen_rtl/lsu/rtl/ct_lsu_lfb.v | 275 ++++++++----------
+ .../gen_rtl/lsu/rtl/ct_lsu_snoop_snq.v        |  76 +++--
+ .../gen_rtl/lsu/rtl/ct_lsu_snoop_snq_entry.v  |  56 ++--
+ C910_RTL_FACTORY/gen_rtl/lsu/rtl/ct_lsu_top.v |  18 +-
+ 9 files changed, 236 insertions(+), 251 deletions(-)
+
+diff --git a/C910_RTL_FACTORY/gen_rtl/cpu/rtl/ct_core.v b/C910_RTL_FACTORY/gen_rtl/cpu/rtl/ct_core.v
+index f2234f6..c1e57c2 100644
+--- a/C910_RTL_FACTORY/gen_rtl/cpu/rtl/ct_core.v
++++ b/C910_RTL_FACTORY/gen_rtl/cpu/rtl/ct_core.v
+@@ -17,7 +17,9 @@ limitations under the License.
+ // //&Depend("core_golden_port.vp"); @24
+ 
+ // &ModuleBeg; @26
+-module ct_core(
++module ct_core #(
++  parameter LFB_DATA_ENTRY = 8
++)(
+   biu_cp0_apb_base,
+   biu_cp0_cmplt,
+   biu_cp0_coreid,
+@@ -790,7 +792,7 @@ output           lsu_biu_w_vict_last;
+ output  [15 :0]  lsu_biu_w_vict_strb;                    
+ output           lsu_biu_w_vict_vld;                     
+ output           lsu_biu_w_vict_wns;                     
+-output  [183:0]  lsu_had_debug_info;                     
++output  [183-2*2+LFB_DATA_ENTRY*2:0]  lsu_had_debug_info;                     
+ output  [39 :0]  lsu_had_ld_addr;                        
+ output  [63 :0]  lsu_had_ld_data;                        
+ output  [6  :0]  lsu_had_ld_iid;                         
+@@ -1793,7 +1795,7 @@ wire             lsu_biu_w_vict_wns;
+ wire             lsu_cp0_dcache_done;                    
+ wire    [127:0]  lsu_cp0_dcache_read_data;               
+ wire             lsu_cp0_dcache_read_data_vld;           
+-wire    [183:0]  lsu_had_debug_info;                     
++wire    [183-2*2+LFB_DATA_ENTRY*2:0]  lsu_had_debug_info;                     
+ wire    [39 :0]  lsu_had_ld_addr;                        
+ wire    [63 :0]  lsu_had_ld_data;                        
+ wire    [6  :0]  lsu_had_ld_iid;                         
+diff --git a/C910_RTL_FACTORY/gen_rtl/cpu/rtl/ct_top.v b/C910_RTL_FACTORY/gen_rtl/cpu/rtl/ct_top.v
+index 5efda06..d5b1e98 100644
+--- a/C910_RTL_FACTORY/gen_rtl/cpu/rtl/ct_top.v
++++ b/C910_RTL_FACTORY/gen_rtl/cpu/rtl/ct_top.v
+@@ -17,7 +17,9 @@ limitations under the License.
+ // &Depend("top_golden_port.vp"); @25
+ 
+ // &ModuleBeg; @27
+-module ct_top(
++module ct_top #(
++  parameter LFB_DATA_ENTRY = 8
++)(
+   biu_pad_acready,
+   biu_pad_araddr,
+   biu_pad_arbar,
+@@ -599,7 +601,7 @@ wire             lsu_biu_w_vict_last;
+ wire    [15 :0]  lsu_biu_w_vict_strb;                 
+ wire             lsu_biu_w_vict_vld;                  
+ wire             lsu_biu_w_vict_wns;                  
+-wire    [183:0]  lsu_had_debug_info;                  
++wire    [183-2*2+LFB_DATA_ENTRY*2:0]  lsu_had_debug_info;                  
+ wire    [39 :0]  lsu_had_ld_addr;                     
+ wire    [63 :0]  lsu_had_ld_data;                     
+ wire    [6  :0]  lsu_had_ld_iid;                      
+diff --git a/C910_RTL_FACTORY/gen_rtl/had/rtl/ct_had_dbg_info.v b/C910_RTL_FACTORY/gen_rtl/had/rtl/ct_had_dbg_info.v
+index 8411522..a3a79cb 100644
+--- a/C910_RTL_FACTORY/gen_rtl/had/rtl/ct_had_dbg_info.v
++++ b/C910_RTL_FACTORY/gen_rtl/had/rtl/ct_had_dbg_info.v
+@@ -14,7 +14,9 @@ limitations under the License.
+ */
+ 
+ // &ModuleBeg; @23
+-module ct_had_dbg_info(
++module ct_had_dbg_info #(
++  parameter LFB_DATA_ENTRY = 8
++)(
+   cp0_had_debug_info,
+   cpuclk,
+   cpurst_b,
+@@ -73,7 +75,7 @@ input   [82 :0]  ifu_had_debug_info;
+ input            ir_xx_pipesel_reg_sel;       
+ input   [63 :0]  ir_xx_wdata;                 
+ input   [9  :0]  iu_had_debug_info;           
+-input   [183:0]  lsu_had_debug_info;          
++input   [183-2*2+LFB_DATA_ENTRY*2:0]  lsu_had_debug_info;          
+ input   [39 :0]  lsu_had_st_addr;             
+ input   [63 :0]  lsu_had_st_data;             
+ input            lsu_had_st_req;              
+@@ -107,7 +109,7 @@ reg     [2  :0]  pipefifo_sel;
+ reg     [1  :0]  pipesel;                     
+ reg     [4  :0]  rptr;                        
+ reg     [4  :0]  wptr;                        
+-reg     [407:0]  xx_dbg_info_reg;             
++reg     [407-2*2+LFB_DATA_ENTRY*2:0]  xx_dbg_info_reg;             
+ 
+ // &Wires; @26
+ wire    [3  :0]  cp0_had_debug_info;          
+@@ -137,7 +139,7 @@ wire    [82 :0]  ifu_had_debug_info;
+ wire             ir_xx_pipesel_reg_sel;       
+ wire    [63 :0]  ir_xx_wdata;                 
+ wire    [9  :0]  iu_had_debug_info;           
+-wire    [183:0]  lsu_had_debug_info;          
++wire    [183-2*2+LFB_DATA_ENTRY*2:0]  lsu_had_debug_info;          
+ wire    [39 :0]  lsu_had_st_addr;             
+ wire    [63 :0]  lsu_had_st_data;             
+ wire             lsu_had_st_req;              
+@@ -172,7 +174,7 @@ wire    [15 :0]  wptr_sel_1;
+ wire    [15 :0]  wptr_sel_2;                  
+ wire             x_dbg_ack_pc;                
+ wire             x_sm_xx_update_dr_en;        
+-wire    [407:0]  xx_dgb_info;                 
++wire    [407-2*2+LFB_DATA_ENTRY*2:0]  xx_dgb_info;                 
+ 
+ 
+ // &Force("nonport","pipefifo_din_0"); @28
+@@ -379,7 +381,7 @@ assign dbginfo_reg[2][63:0] = xx_dbg_info_reg[191:128];
+ assign dbginfo_reg[3][63:0] = xx_dbg_info_reg[255:192];
+ assign dbginfo_reg[4][63:0] = xx_dbg_info_reg[319:256];
+ assign dbginfo_reg[5][63:0] = xx_dbg_info_reg[383:320];
+-assign dbginfo_reg[6][63:0] = {40'b0, xx_dbg_info_reg[407:384]};
++assign dbginfo_reg[6][63:0] = {{(40+2*2-LFB_DATA_ENTRY*2){1'b0}}, xx_dbg_info_reg[407-2*2+LFB_DATA_ENTRY*2:384]};
+ //csky vperl_on
+ 
+ // &Force("input","ctrl_dbgfifo_ren"); @221
+@@ -401,12 +403,12 @@ assign dbgfifo_regs_data[DBG_WIDTH-1:0] = dbginfo_dout[DBG_WIDTH-1:0];
+ //==========================================================
+ //                 DBGINFO FIFO write
+ //==========================================================
+-assign xx_dgb_info[407:0] = {mmu_had_debug_info[33:0],
++assign xx_dgb_info[407-2*2+LFB_DATA_ENTRY*2:0] = {mmu_had_debug_info[33:0],
+                              rtu_had_debug_info[42:0],
+                              cp0_had_debug_info[3:0],
+                              iu_had_debug_info[9:0],
+                              idu_had_debug_info[49:0],
+-                             lsu_had_debug_info[183:0],
++                             lsu_had_debug_info[183-2*2+LFB_DATA_ENTRY*2:0],
+                              ifu_had_debug_info[82:0]};
+ 
+ always @(posedge cpuclk or negedge cpurst_b)
+@@ -422,9 +424,9 @@ end
+ always @(posedge cpuclk or negedge cpurst_b)
+ begin
+   if (!cpurst_b)
+-    xx_dbg_info_reg[407:0] <= 408'b0;
++    xx_dbg_info_reg[407-2*2+LFB_DATA_ENTRY*2:0] <= {(408-2*2+LFB_DATA_ENTRY*2){1'b0}};
+   else if (dbg_ack_pc_f)
+-    xx_dbg_info_reg[407:0] <= xx_dgb_info[407:0];
++    xx_dbg_info_reg[407-2*2+LFB_DATA_ENTRY*2:0] <= xx_dgb_info[407-2*2+LFB_DATA_ENTRY*2:0];
+ end
+ 
+ always @(posedge cpuclk or negedge cpurst_b)
+diff --git a/C910_RTL_FACTORY/gen_rtl/had/rtl/ct_had_private_top.v b/C910_RTL_FACTORY/gen_rtl/had/rtl/ct_had_private_top.v
+index 81eb804..2bb5795 100644
+--- a/C910_RTL_FACTORY/gen_rtl/had/rtl/ct_had_private_top.v
++++ b/C910_RTL_FACTORY/gen_rtl/had/rtl/ct_had_private_top.v
+@@ -14,7 +14,9 @@ limitations under the License.
+ */
+ 
+ // &ModuleBeg; @23
+-module ct_had_private_top(
++module ct_had_private_top #(
++  parameter LFB_DATA_ENTRY = 8
++)(
+   biu_had_coreid,
+   biu_had_sdb_req_b,
+   cp0_had_cpuid_0,
+@@ -190,7 +192,7 @@ input            ifu_had_no_op;
+ input            ifu_had_reset_on;               
+ input   [63 :0]  ir_corex_wdata;                 
+ input   [9  :0]  iu_had_debug_info;              
+-input   [183:0]  lsu_had_debug_info;             
++input   [183-2*2+LFB_DATA_ENTRY*2:0]  lsu_had_debug_info;             
+ input   [39 :0]  lsu_had_ld_addr;                
+ input   [63 :0]  lsu_had_ld_data;                
+ input   [6  :0]  lsu_had_ld_iid;                 
+@@ -450,7 +452,7 @@ wire             ir_xx_pipesel_reg_sel;
+ wire             ir_xx_wbbr_reg_sel;             
+ wire    [63 :0]  ir_xx_wdata;                    
+ wire    [9  :0]  iu_had_debug_info;              
+-wire    [183:0]  lsu_had_debug_info;             
++wire    [183-2*2+LFB_DATA_ENTRY*2:0]  lsu_had_debug_info;             
+ wire             lsu_had_no_op;                  
+ wire    [39 :0]  lsu_had_st_addr;                
+ wire    [63 :0]  lsu_had_st_data;                
+diff --git a/C910_RTL_FACTORY/gen_rtl/lsu/rtl/ct_lsu_ctrl.v b/C910_RTL_FACTORY/gen_rtl/lsu/rtl/ct_lsu_ctrl.v
+index c53aec7..6b76daf 100644
+--- a/C910_RTL_FACTORY/gen_rtl/lsu/rtl/ct_lsu_ctrl.v
++++ b/C910_RTL_FACTORY/gen_rtl/lsu/rtl/ct_lsu_ctrl.v
+@@ -14,7 +14,9 @@ limitations under the License.
+ */
+ 
+ // &ModuleBeg; @26
+-module ct_lsu_ctrl(
++module ct_lsu_ctrl #(
++  parameter LFB_DATA_ENTRY = 8
++)(
+   cp0_lsu_dcache_pref_dist,
+   cp0_lsu_icg_en,
+   cp0_lsu_l2_pref_dist,
+@@ -380,7 +382,7 @@ input            wmb_st_wb_cmplt_req;
+ input            wmb_write_req_icc;                
+ output           ctrl_ld_clk;                      
+ output           ctrl_st_clk;                      
+-output  [183:0]  lsu_had_debug_info;               
++output  [183-2*2+LFB_DATA_ENTRY*2:0]  lsu_had_debug_info;               
+ output           lsu_had_no_op;                    
+ output           lsu_hpcp_cache_read_access;       
+ output           lsu_hpcp_cache_read_miss;         
+@@ -505,13 +507,13 @@ wire    [1  :0]  lsu_had_cdr_state;
+ wire    [5  :0]  lsu_had_ctcq_entry_2_cmplt;       
+ wire    [5  :0]  lsu_had_ctcq_entry_cmplt;         
+ wire    [5  :0]  lsu_had_ctcq_entry_vld;           
+-wire    [183:0]  lsu_had_debug_info;               
++wire    [183-2*2+LFB_DATA_ENTRY*2:0]  lsu_had_debug_info;               
+ wire    [2  :0]  lsu_had_icc_state;                
+ wire    [7  :0]  lsu_had_lfb_addr_entry_dcache_hit; 
+ wire    [7  :0]  lsu_had_lfb_addr_entry_rcl_done;  
+ wire    [7  :0]  lsu_had_lfb_addr_entry_vld;       
+-wire    [1  :0]  lsu_had_lfb_data_entry_last;      
+-wire    [1  :0]  lsu_had_lfb_data_entry_vld;       
++wire    [LFB_DATA_ENTRY-1 :0]  lsu_had_lfb_data_entry_last;      
++wire    [LFB_DATA_ENTRY-1 :0]  lsu_had_lfb_data_entry_vld;       
+ wire             lsu_had_lfb_lf_sm_vld;            
+ wire    [12 :0]  lsu_had_lfb_wakeup_queue;         
+ wire    [2  :0]  lsu_had_lm_state;                 
+@@ -1000,13 +1002,13 @@ assign lsu_yy_xx_no_op  = wmb_empty
+                           &&  vb_empty;
+ 
+ 
+-assign lsu_had_debug_info[183:0] = {lsu_had_amr_state[2:0],
++assign lsu_had_debug_info[183-2*2+LFB_DATA_ENTRY*2:0] = {lsu_had_amr_state[2:0],
+       lsu_had_icc_state[2:0],
+       lsu_had_lfb_addr_entry_vld[7:0],
+       lsu_had_lfb_addr_entry_rcl_done[7:0],
+       lsu_had_lfb_addr_entry_dcache_hit[7:0],
+-      lsu_had_lfb_data_entry_vld[1:0],
+-      lsu_had_lfb_data_entry_last[1:0],
++      lsu_had_lfb_data_entry_vld[LFB_DATA_ENTRY-1:0],
++      lsu_had_lfb_data_entry_last[LFB_DATA_ENTRY-1:0],
+       lsu_had_lfb_lf_sm_vld,
+       lsu_had_lfb_wakeup_queue[12:0],
+       lsu_had_vb_addr_entry_vld[1:0],
+diff --git a/C910_RTL_FACTORY/gen_rtl/lsu/rtl/ct_lsu_lfb.v b/C910_RTL_FACTORY/gen_rtl/lsu/rtl/ct_lsu_lfb.v
+index 7882aad..f5ac509 100644
+--- a/C910_RTL_FACTORY/gen_rtl/lsu/rtl/ct_lsu_lfb.v
++++ b/C910_RTL_FACTORY/gen_rtl/lsu/rtl/ct_lsu_lfb.v
+@@ -16,7 +16,9 @@ limitations under the License.
+ `include "cpu_cfig.h"
+ 
+ // &ModuleBeg; @29
+-module ct_lsu_lfb(
++module ct_lsu_lfb #(
++  parameter LFB_DATA_ENTRY = 8
++)(
+   biu_lsu_r_data,
+   biu_lsu_r_id,
+   biu_lsu_r_last,
+@@ -172,8 +174,8 @@ input            rb_lfb_ldamo;
+ input            rtu_yy_xx_flush;                     
+ input   [33 :0]  snq_bypass_addr_tto6;                
+ input            snq_create_lfb_vb_req_hit_idx;       
+-input   [1  :0]  snq_lfb_bypass_chg_tag;              
+-input   [1  :0]  snq_lfb_bypass_invalid;              
++input   [LFB_DATA_ENTRY-1 :0]  snq_lfb_bypass_chg_tag;              
++input   [LFB_DATA_ENTRY-1 :0]  snq_lfb_bypass_invalid;              
+ input            snq_lfb_vb_req_hit_idx;              
+ input   [39 :0]  st_da_addr;                          
+ input   [7  :0]  vb_lfb_addr_entry_rcl_done;          
+@@ -224,7 +226,7 @@ output           lfb_rb_biu_req_hit_idx;
+ output           lfb_rb_ca_rready_grnt;               
+ output  [4  :0]  lfb_rb_create_id;                    
+ output           lfb_rb_nc_rready_grnt;               
+-output  [1  :0]  lfb_snq_bypass_data_id;              
++output  [LFB_DATA_ENTRY-1  :0]  lfb_snq_bypass_data_id;              
+ output           lfb_snq_bypass_hit;                  
+ output           lfb_snq_bypass_share;                
+ output           lfb_st_da_hit_idx;                   
+@@ -240,22 +242,22 @@ output           lsu_biu_r_linefill_ready;
+ output  [7  :0]  lsu_had_lfb_addr_entry_dcache_hit;   
+ output  [7  :0]  lsu_had_lfb_addr_entry_rcl_done;     
+ output  [7  :0]  lsu_had_lfb_addr_entry_vld;          
+-output  [1  :0]  lsu_had_lfb_data_entry_last;         
+-output  [1  :0]  lsu_had_lfb_data_entry_vld;          
++output  [LFB_DATA_ENTRY-1 :0]  lsu_had_lfb_data_entry_last;         
++output  [LFB_DATA_ENTRY-1 :0]  lsu_had_lfb_data_entry_vld;          
+ output           lsu_had_lfb_lf_sm_vld;               
+ output  [12 :0]  lsu_had_lfb_wakeup_queue;            
+ 
+ // &Regs; @31
+ reg     [7  :0]  lfb_addr_create_ptr;                 
+-reg     [1  :0]  lfb_data_create_ptr;                 
++wire    [LFB_DATA_ENTRY-1 :0]  lfb_data_create_ptr;                 
+ reg     [3  :0]  lfb_first_pass_ptr;                  
+ reg     [7  :0]  lfb_lf_sm_addr_id;                   
+ reg     [33 :0]  lfb_lf_sm_addr_tto6;                 
+ reg              lfb_lf_sm_cnt;                       
+-reg     [1  :0]  lfb_lf_sm_data_id;                   
++reg     [LFB_DATA_ENTRY-1 :0]  lfb_lf_sm_data_id;                   
+ reg              lfb_lf_sm_dcache_share;              
+ reg              lfb_lf_sm_refill_way;                
+-reg     [1  :0]  lfb_lf_sm_req_data_ptr;              
++wire    [LFB_DATA_ENTRY-1 :0]  lfb_lf_sm_req_data_ptr;              
+ reg              lfb_lf_sm_vld;                       
+ reg     [3  :0]  lfb_no_rcl_cnt;                      
+ reg              lfb_pop_depd_ff;                     
+@@ -359,22 +361,19 @@ wire             lfb_data_create_dp_vld;
+ wire             lfb_data_create_gateclk_en;          
+ wire             lfb_data_create_vld;                 
+ wire             lfb_data_empty;                      
+-wire    [7  :0]  lfb_data_entry_addr_id_0;            
+-wire    [7  :0]  lfb_data_entry_addr_id_1;            
+-wire    [7  :0]  lfb_data_entry_addr_pop_req_0;       
+-wire    [7  :0]  lfb_data_entry_addr_pop_req_1;       
+-wire    [1  :0]  lfb_data_entry_create_dp_vld;        
+-wire    [1  :0]  lfb_data_entry_create_gateclk_en;    
+-wire    [1  :0]  lfb_data_entry_create_vld;           
+-wire    [511:0]  lfb_data_entry_data_0;               
+-wire    [511:0]  lfb_data_entry_data_1;               
+-wire    [1  :0]  lfb_data_entry_dcache_share;         
+-wire    [1  :0]  lfb_data_entry_full;                 
+-wire    [1  :0]  lfb_data_entry_last;                 
+-wire    [1  :0]  lfb_data_entry_lf_sm_req;            
+-wire    [1  :0]  lfb_data_entry_vld;                  
+-wire    [1  :0]  lfb_data_entry_wait_surplus;         
+-wire    [1  :0]  lfb_data_entry_r_id_hit; // to indicate if the id is match the exist data entry, for r data interleave
++wire    [7  :0]  lfb_data_entry_addr_id      [LFB_DATA_ENTRY-1 :0];
++wire    [7  :0]  lfb_data_entry_addr_pop_req [LFB_DATA_ENTRY-1 :0];
++wire    [LFB_DATA_ENTRY-1 :0]  lfb_data_entry_create_dp_vld;
++wire    [LFB_DATA_ENTRY-1 :0]  lfb_data_entry_create_gateclk_en;
++wire    [LFB_DATA_ENTRY-1 :0]  lfb_data_entry_create_vld;
++wire    [511:0]  lfb_data_entry_data [LFB_DATA_ENTRY-1 :0];
++wire    [LFB_DATA_ENTRY-1 :0]  lfb_data_entry_dcache_share;
++wire    [LFB_DATA_ENTRY-1 :0]  lfb_data_entry_full;
++wire    [LFB_DATA_ENTRY-1 :0]  lfb_data_entry_last;
++wire    [LFB_DATA_ENTRY-1 :0]  lfb_data_entry_lf_sm_req;
++wire    [LFB_DATA_ENTRY-1 :0]  lfb_data_entry_vld;
++wire    [LFB_DATA_ENTRY-1 :0]  lfb_data_entry_wait_surplus;
++wire    [LFB_DATA_ENTRY-1 :0]  lfb_data_entry_r_id_hit; // to indicate if the id is match the exist data entry, for r data interleave
+ wire             lfb_data_not_full;                   
+ wire             lfb_data_wait_surplus;               
+ wire    [7  :0]  lfb_dcache_arb_ld_data_gateclk_en;   
+@@ -409,8 +408,8 @@ wire             lfb_lf_sm_create_vld;
+ wire    [255:0]  lfb_lf_sm_data256;                   
+ wire    [511:0]  lfb_lf_sm_data512;                   
+ wire             lfb_lf_sm_data_dcache_share;         
+-wire    [1  :0]  lfb_lf_sm_data_grnt;                 
+-wire    [1  :0]  lfb_lf_sm_data_pop_req;              
++wire    [LFB_DATA_ENTRY-1 :0]  lfb_lf_sm_data_grnt;                 
++wire    [LFB_DATA_ENTRY-1 :0]  lfb_lf_sm_data_pop_req;              
+ wire    [255:0]  lfb_lf_sm_data_settle;               
+ wire             lfb_lf_sm_permit;                    
+ wire             lfb_lf_sm_refill_wakeup;             
+@@ -424,7 +423,7 @@ wire             lfb_lf_sm_req_refill_way;
+ wire             lfb_mcic_wakeup;                     
+ wire             lfb_nc_rready_grnt;                  
+ wire    [3  :0]  lfb_no_rcl_cnt_create;               
+-wire    [3  :0]  lfb_no_rcl_cnt_pop;                  
++reg     [3  :0]  lfb_no_rcl_cnt_pop;                  
+ wire    [3  :0]  lfb_no_rcl_cnt_updt_val;             
+ wire             lfb_no_rcl_cnt_updt_vld;             
+ wire    [1  :0]  lfb_pass_addr_5to4;                  
+@@ -441,7 +440,7 @@ wire             lfb_rb_ca_rready_grnt;
+ wire             lfb_rb_create_grnt;                  
+ wire    [4  :0]  lfb_rb_create_id;                    
+ wire             lfb_rb_nc_rready_grnt;               
+-wire    [1  :0]  lfb_snq_bypass_data_id;              
++wire    [LFB_DATA_ENTRY-1  :0]  lfb_snq_bypass_data_id;              
+ wire             lfb_snq_bypass_hit;                  
+ wire             lfb_snq_bypass_share;                
+ wire             lfb_st_da_hit_idx;                   
+@@ -474,8 +473,8 @@ wire             lsu_biu_r_linefill_ready;
+ wire    [7  :0]  lsu_had_lfb_addr_entry_dcache_hit;   
+ wire    [7  :0]  lsu_had_lfb_addr_entry_rcl_done;     
+ wire    [7  :0]  lsu_had_lfb_addr_entry_vld;          
+-wire    [1  :0]  lsu_had_lfb_data_entry_last;         
+-wire    [1  :0]  lsu_had_lfb_data_entry_vld;          
++wire    [LFB_DATA_ENTRY-1 :0]  lsu_had_lfb_data_entry_last;         
++wire    [LFB_DATA_ENTRY-1 :0]  lsu_had_lfb_data_entry_vld;          
+ wire             lsu_had_lfb_lf_sm_vld;               
+ wire    [12 :0]  lsu_had_lfb_wakeup_queue;            
+ wire             lsu_special_clk;                     
+@@ -499,8 +498,8 @@ wire             rb_lfb_ldamo;
+ wire             rtu_yy_xx_flush;                     
+ wire    [33 :0]  snq_bypass_addr_tto6;                
+ wire             snq_create_lfb_vb_req_hit_idx;       
+-wire    [1  :0]  snq_lfb_bypass_chg_tag;              
+-wire    [1  :0]  snq_lfb_bypass_invalid;              
++wire    [LFB_DATA_ENTRY-1 :0]  snq_lfb_bypass_chg_tag;              
++wire    [LFB_DATA_ENTRY-1 :0]  snq_lfb_bypass_invalid;              
+ wire             snq_lfb_vb_req_hit_idx;              
+ wire    [39 :0]  st_da_addr;                          
+ wire    [7  :0]  vb_lfb_addr_entry_rcl_done;          
+@@ -515,8 +514,7 @@ wire    [39 :0]  wmb_write_req_addr;
+ 
+ 
+ parameter LSIQ_ENTRY      = 12,
+-          LFB_ADDR_ENTRY  = 8,
+-          LFB_DATA_ENTRY  = 2;
++          LFB_ADDR_ENTRY  = 8;
+ parameter BIU_LFB_ID_T    = 2'b00;
+ parameter OKAY            = 2'b00,
+           EXOKAY          = 2'b01,
+@@ -1172,81 +1170,46 @@ ct_lsu_lfb_addr_entry  x_ct_lsu_lfb_addr_entry_7 (
+ // &ConnRule(s/_x$/[0]/); @151
+ // &ConnRule(s/_v$/_0/); @152
+ // &Instance("ct_lsu_lfb_data_entry","x_ct_lsu_lfb_data_entry_0"); @153
+-ct_lsu_lfb_data_entry  x_ct_lsu_lfb_data_entry_0 (
+-  .biu_lsu_r_data                      (biu_lsu_r_data                     ),
+-  .biu_lsu_r_last                      (biu_lsu_r_last                     ),
+-  .biu_lsu_r_vld                       (biu_lsu_r_vld                      ),
+-  .cp0_lsu_dcache_en                   (cp0_lsu_dcache_en                  ),
+-  .cp0_lsu_icg_en                      (cp0_lsu_icg_en                     ),
+-  .cp0_yy_clk_en                       (cp0_yy_clk_en                      ),
+-  .cpurst_b                            (cpurst_b                           ),
+-  .lfb_addr_entry_linefill_abort       (lfb_addr_entry_linefill_abort      ),
+-  .lfb_addr_entry_linefill_permit      (lfb_addr_entry_linefill_permit     ),
+-  .lfb_biu_id_2to0                     (lfb_biu_id_2to0                    ),
+-  .lfb_biu_r_id_hit                    (lfb_biu_r_id_hit                   ),
+-  .lfb_data_entry_addr_id_v            (lfb_data_entry_addr_id_0           ),
+-  .lfb_data_entry_addr_pop_req_v       (lfb_data_entry_addr_pop_req_0      ),
+-  .lfb_data_entry_create_dp_vld_x      (lfb_data_entry_create_dp_vld[0]    ),
+-  .lfb_data_entry_create_gateclk_en_x  (lfb_data_entry_create_gateclk_en[0]),
+-  .lfb_data_entry_create_vld_x         (lfb_data_entry_create_vld[0]       ),
+-  .lfb_data_entry_data_v               (lfb_data_entry_data_0              ),
+-  .lfb_data_entry_dcache_share_x       (lfb_data_entry_dcache_share[0]     ),
+-  .lfb_data_entry_full_x               (lfb_data_entry_full[0]             ),
+-  .lfb_data_entry_last_x               (lfb_data_entry_last[0]             ),
+-  .lfb_data_entry_lf_sm_req_x          (lfb_data_entry_lf_sm_req[0]        ),
+-  .lfb_data_entry_vld_x                (lfb_data_entry_vld[0]              ),
+-  .lfb_data_entry_wait_surplus_x       (lfb_data_entry_wait_surplus[0]     ),
+-  .lfb_data_entry_r_id_hit_x           (lfb_data_entry_r_id_hit[0]         ),
+-  .lfb_first_pass_ptr                  (lfb_first_pass_ptr                 ),
+-  .lfb_lf_sm_data_grnt_x               (lfb_lf_sm_data_grnt[0]             ),
+-  .lfb_lf_sm_data_pop_req_x            (lfb_lf_sm_data_pop_req[0]          ),
+-  .lfb_r_resp_err                      (lfb_r_resp_err                     ),
+-  .lfb_r_resp_share                    (lfb_r_resp_share                   ),
+-  .lsu_special_clk                     (lsu_special_clk                    ),
+-  .pad_yy_icg_scan_en                  (pad_yy_icg_scan_en                 ),
+-  .snq_lfb_bypass_chg_tag_x            (snq_lfb_bypass_chg_tag[0]          ),
+-  .snq_lfb_bypass_invalid_x            (snq_lfb_bypass_invalid[0]          )
+-);
+-
+-
+-// &ConnRule(s/_x$/[1]/); @155
+-// &ConnRule(s/_v$/_1/); @156
+-// &Instance("ct_lsu_lfb_data_entry","x_ct_lsu_lfb_data_entry_1"); @157
+-ct_lsu_lfb_data_entry  x_ct_lsu_lfb_data_entry_1 (
+-  .biu_lsu_r_data                      (biu_lsu_r_data                     ),
+-  .biu_lsu_r_last                      (biu_lsu_r_last                     ),
+-  .biu_lsu_r_vld                       (biu_lsu_r_vld                      ),
+-  .cp0_lsu_dcache_en                   (cp0_lsu_dcache_en                  ),
+-  .cp0_lsu_icg_en                      (cp0_lsu_icg_en                     ),
+-  .cp0_yy_clk_en                       (cp0_yy_clk_en                      ),
+-  .cpurst_b                            (cpurst_b                           ),
+-  .lfb_addr_entry_linefill_abort       (lfb_addr_entry_linefill_abort      ),
+-  .lfb_addr_entry_linefill_permit      (lfb_addr_entry_linefill_permit     ),
+-  .lfb_biu_id_2to0                     (lfb_biu_id_2to0                    ),
+-  .lfb_biu_r_id_hit                    (lfb_biu_r_id_hit                   ),
+-  .lfb_data_entry_addr_id_v            (lfb_data_entry_addr_id_1           ),
+-  .lfb_data_entry_addr_pop_req_v       (lfb_data_entry_addr_pop_req_1      ),
+-  .lfb_data_entry_create_dp_vld_x      (lfb_data_entry_create_dp_vld[1]    ),
+-  .lfb_data_entry_create_gateclk_en_x  (lfb_data_entry_create_gateclk_en[1]),
+-  .lfb_data_entry_create_vld_x         (lfb_data_entry_create_vld[1]       ),
+-  .lfb_data_entry_data_v               (lfb_data_entry_data_1              ),
+-  .lfb_data_entry_dcache_share_x       (lfb_data_entry_dcache_share[1]     ),
+-  .lfb_data_entry_full_x               (lfb_data_entry_full[1]             ),
+-  .lfb_data_entry_last_x               (lfb_data_entry_last[1]             ),
+-  .lfb_data_entry_lf_sm_req_x          (lfb_data_entry_lf_sm_req[1]        ),
+-  .lfb_data_entry_vld_x                (lfb_data_entry_vld[1]              ),
+-  .lfb_data_entry_wait_surplus_x       (lfb_data_entry_wait_surplus[1]     ),
+-  .lfb_data_entry_r_id_hit_x           (lfb_data_entry_r_id_hit[1]         ),
+-  .lfb_first_pass_ptr                  (lfb_first_pass_ptr                 ),
+-  .lfb_lf_sm_data_grnt_x               (lfb_lf_sm_data_grnt[1]             ),
+-  .lfb_lf_sm_data_pop_req_x            (lfb_lf_sm_data_pop_req[1]          ),
+-  .lfb_r_resp_err                      (lfb_r_resp_err                     ),
+-  .lfb_r_resp_share                    (lfb_r_resp_share                   ),
+-  .lsu_special_clk                     (lsu_special_clk                    ),
+-  .pad_yy_icg_scan_en                  (pad_yy_icg_scan_en                 ),
+-  .snq_lfb_bypass_chg_tag_x            (snq_lfb_bypass_chg_tag[1]          ),
+-  .snq_lfb_bypass_invalid_x            (snq_lfb_bypass_invalid[1]          )
+-);
++genvar i, j;
++generate
++  for(i = 0; i < LFB_DATA_ENTRY; i=i+1) begin
++    ct_lsu_lfb_data_entry  x_ct_lsu_lfb_data_entry (
++      .biu_lsu_r_data                      (biu_lsu_r_data                     ),
++      .biu_lsu_r_last                      (biu_lsu_r_last                     ),
++      .biu_lsu_r_vld                       (biu_lsu_r_vld                      ),
++      .cp0_lsu_dcache_en                   (cp0_lsu_dcache_en                  ),
++      .cp0_lsu_icg_en                      (cp0_lsu_icg_en                     ),
++      .cp0_yy_clk_en                       (cp0_yy_clk_en                      ),
++      .cpurst_b                            (cpurst_b                           ),
++      .lfb_addr_entry_linefill_abort       (lfb_addr_entry_linefill_abort      ),
++      .lfb_addr_entry_linefill_permit      (lfb_addr_entry_linefill_permit     ),
++      .lfb_biu_id_2to0                     (lfb_biu_id_2to0                    ),
++      .lfb_biu_r_id_hit                    (lfb_biu_r_id_hit                   ),
++      .lfb_data_entry_addr_id_v            (lfb_data_entry_addr_id[i]          ),
++      .lfb_data_entry_addr_pop_req_v       (lfb_data_entry_addr_pop_req[i]     ),
++      .lfb_data_entry_create_dp_vld_x      (lfb_data_entry_create_dp_vld[i]    ),
++      .lfb_data_entry_create_gateclk_en_x  (lfb_data_entry_create_gateclk_en[i]),
++      .lfb_data_entry_create_vld_x         (lfb_data_entry_create_vld[i]       ),
++      .lfb_data_entry_data_v               (lfb_data_entry_data[i]             ),
++      .lfb_data_entry_dcache_share_x       (lfb_data_entry_dcache_share[i]     ),
++      .lfb_data_entry_full_x               (lfb_data_entry_full[i]             ),
++      .lfb_data_entry_last_x               (lfb_data_entry_last[i]             ),
++      .lfb_data_entry_lf_sm_req_x          (lfb_data_entry_lf_sm_req[i]        ),
++      .lfb_data_entry_vld_x                (lfb_data_entry_vld[i]              ),
++      .lfb_data_entry_wait_surplus_x       (lfb_data_entry_wait_surplus[i]     ),
++      .lfb_data_entry_r_id_hit_x           (lfb_data_entry_r_id_hit[i]         ),
++      .lfb_first_pass_ptr                  (lfb_first_pass_ptr                 ),
++      .lfb_lf_sm_data_grnt_x               (lfb_lf_sm_data_grnt[i]             ),
++      .lfb_lf_sm_data_pop_req_x            (lfb_lf_sm_data_pop_req[i]          ),
++      .lfb_r_resp_err                      (lfb_r_resp_err                     ),
++      .lfb_r_resp_share                    (lfb_r_resp_share                   ),
++      .lsu_special_clk                     (lsu_special_clk                    ),
++      .pad_yy_icg_scan_en                  (pad_yy_icg_scan_en                 ),
++      .snq_lfb_bypass_chg_tag_x            (snq_lfb_bypass_chg_tag[i]          ),
++      .snq_lfb_bypass_invalid_x            (snq_lfb_bypass_invalid[i]          )
++    );
++  end
++endgenerate
+ 
+ 
+ 
+@@ -1472,16 +1435,8 @@ assign lfb_r_resp_err       = (biu_lsu_r_resp[1:0] ==  DECERR)
+ 
+ //------------------create ptr------------------------------
+ // &CombBeg; @365
+-always @( lfb_data_entry_vld[1:0])
+-begin
+-lfb_data_create_ptr[LFB_DATA_ENTRY-1:0]   = {LFB_DATA_ENTRY{1'b0}};
+-casez(lfb_data_entry_vld[LFB_DATA_ENTRY-1:0])
+-  2'b?0:lfb_data_create_ptr[0]  = 1'b1;
+-  2'b01:lfb_data_create_ptr[1]  = 1'b1;
+-  default:lfb_data_create_ptr[LFB_DATA_ENTRY-1:0]   = {LFB_DATA_ENTRY{1'b0}};
+-endcase
+-// &CombEnd; @372
+-end
++assign lfb_data_create_ptr[LFB_DATA_ENTRY-1:0] = (~(~lfb_data_entry_vld[LFB_DATA_ENTRY-1:0] - 1)) & 
++                                                 (~lfb_data_entry_vld[LFB_DATA_ENTRY-1:0]);
+ //------------------create signal---------------------------
+ //if no vld, or only one vld and full, then create
+ assign lfb_data_wait_surplus  = |(lfb_data_entry_wait_surplus[LFB_DATA_ENTRY-1:0]
+@@ -1607,24 +1562,22 @@ assign lfb_lf_sm_create_vld = lfb_lf_sm_req
+ 
+ //------------------create info-----------------------------
+ // &CombBeg; @490
+-always @( lfb_data_entry_lf_sm_req[1:0])
+-begin
+-lfb_lf_sm_req_data_ptr[LFB_DATA_ENTRY-1:0] = {LFB_DATA_ENTRY{1'b0}};
+-casez(lfb_data_entry_lf_sm_req[LFB_DATA_ENTRY-1:0])
+-  2'b?1:lfb_lf_sm_req_data_ptr[0] = 1'b1;
+-  2'b10:lfb_lf_sm_req_data_ptr[1] = 1'b1;
+-  default:lfb_lf_sm_req_data_ptr[LFB_DATA_ENTRY-1:0] = {LFB_DATA_ENTRY{1'b0}};
+-endcase
+-// &CombEnd; @497
+-end
++assign lfb_lf_sm_req_data_ptr[LFB_DATA_ENTRY-1:0] = (~(lfb_data_entry_lf_sm_req[LFB_DATA_ENTRY-1:0]-1)) & 
++                                                    lfb_data_entry_lf_sm_req[LFB_DATA_ENTRY-1:0];
+ 
+ assign lfb_lf_sm_data_grnt[LFB_DATA_ENTRY-1:0]  = {LFB_DATA_ENTRY{lfb_lf_sm_create_vld}}
+                                                   & lfb_lf_sm_req_data_ptr[LFB_DATA_ENTRY-1:0];
+ 
+-assign lfb_lf_sm_req_addr_ptr[LFB_ADDR_ENTRY-1:0] = {LFB_ADDR_ENTRY{lfb_lf_sm_req_data_ptr[0]}}
+-                                                      & lfb_data_entry_addr_id_0[LFB_ADDR_ENTRY-1:0]
+-                                                    | {LFB_ADDR_ENTRY{lfb_lf_sm_req_data_ptr[1]}}
+-                                                      & lfb_data_entry_addr_id_1[LFB_ADDR_ENTRY-1:0];
++wire [LFB_DATA_ENTRY-1:0] lfb_lf_sm_req_addr_ptr_tmp [LFB_ADDR_ENTRY-1:0];
++
++generate
++  for(i = 0; i < LFB_ADDR_ENTRY; i=i+1) begin
++    for(j = 0; j < LFB_DATA_ENTRY; j=j+1) begin
++      assign lfb_lf_sm_req_addr_ptr_tmp[i][j] = lfb_lf_sm_req_data_ptr[j] & lfb_data_entry_addr_id[j][i];
++    end
++    assign lfb_lf_sm_req_addr_ptr[i] = |(lfb_lf_sm_req_addr_ptr_tmp[i]);
++  end
++endgenerate
+ 
+ assign lfb_lf_sm_req_addr_tto6[`PA_WIDTH-7:0]  =
+                 {`PA_WIDTH-6{lfb_lf_sm_req_addr_ptr[0]}}  & lfb_addr_entry_addr_tto4_0[`PA_WIDTH-5:2]
+@@ -1646,8 +1599,16 @@ assign lfb_lf_sm_refill_wakeup      = lfb_lf_sm_req_depd
+                                       &&  lfb_lf_sm_create_vld;
+ //----------------------settle addr-------------------------
+ //-----------------data-----------------
+-assign lfb_lf_sm_data512[511:0]     = {512{lfb_lf_sm_data_id[0]}} & lfb_data_entry_data_0[511:0]
+-                                      | {512{lfb_lf_sm_data_id[1]}} & lfb_data_entry_data_1[511:0];
++wire [LFB_DATA_ENTRY-1:0] lfb_lf_sm_data512_tmp [512-1:0];
++
++generate
++  for(i = 0; i < 512; i=i+1) begin
++    for(j = 0; j < LFB_DATA_ENTRY; j=j+1) begin
++      assign lfb_lf_sm_data512_tmp[i][j] = lfb_lf_sm_data_id[j] & lfb_data_entry_data[j][i];
++    end
++    assign lfb_lf_sm_data512[i] = |(lfb_lf_sm_data512_tmp[i]);
++  end
++endgenerate
+ 
+ assign lfb_lf_sm_data256[255:0]     = lfb_lf_sm_cnt
+                                       ? lfb_lf_sm_data512[511:256]
+@@ -1751,8 +1712,15 @@ assign lfb_lf_sm_addr_pop_req[LFB_ADDR_ENTRY-1:0] = {LFB_ADDR_ENTRY{lfb_lf_sm_vl
+ assign lfb_lf_sm_data_pop_req[LFB_DATA_ENTRY-1:0] = {LFB_DATA_ENTRY{lfb_lf_sm_vld &&  lfb_lf_sm_cnt}}
+                                                     & lfb_lf_sm_data_id[LFB_DATA_ENTRY-1:0];
+ 
+-assign lfb_data_addr_pop_req[LFB_ADDR_ENTRY-1:0]  = lfb_data_entry_addr_pop_req_0[LFB_ADDR_ENTRY-1:0]
+-                                                    | lfb_data_entry_addr_pop_req_1[LFB_ADDR_ENTRY-1:0];
++wire [LFB_DATA_ENTRY-1:0] lfb_data_entry_addr_pop_req_tmp [LFB_ADDR_ENTRY-1:0];
++generate
++  for(i = 0; i < LFB_ADDR_ENTRY; i=i+1) begin
++    for(j = 0; j < LFB_DATA_ENTRY; j=j+1) begin
++      assign lfb_data_entry_addr_pop_req_tmp[i][j] = lfb_data_entry_addr_pop_req[j][i];
++    end
++    assign lfb_data_addr_pop_req[i] = |(lfb_data_entry_addr_pop_req_tmp[i]);
++  end
++endgenerate
+ //==========================================================
+ //                Maintain wakeup queue
+ //==========================================================
+@@ -1819,13 +1787,19 @@ assign lfb_mcic_wakeup                  = (lfb_pop_depd_ff  ||  rtu_yy_xx_flush)
+ //==========================================================
+ assign lfb_addr_create_vld        = lfb_addr_rb_create_vld || lfb_addr_pfu_create_vld;
+ assign lfb_no_rcl_cnt_create[3:0] = {3'b0,lfb_addr_create_vld && cp0_lsu_dcache_en};
+-assign lfb_no_rcl_cnt_pop[3:0]    = {3'b0,vb_lfb_rcl_done} 
+-                                    + {3'b0,snq_lfb_bypass_invalid[0]}
+-                                    + {3'b0,snq_lfb_bypass_invalid[1]};
++
++integer ii;
++always @(*) begin
++  lfb_no_rcl_cnt_pop[3:0] = 4'b0;
++  for(ii = 0; ii < LFB_DATA_ENTRY; ii=ii+1) begin
++    lfb_no_rcl_cnt_pop = lfb_no_rcl_cnt_pop + {3'b0,snq_lfb_bypass_invalid[ii]};
++  end
++  lfb_no_rcl_cnt_pop = lfb_no_rcl_cnt_pop + {3'b0,vb_lfb_rcl_done};
++end
+ 
+ assign lfb_no_rcl_cnt_updt_vld    = lfb_addr_create_vld && cp0_lsu_dcache_en
+                                     || vb_lfb_rcl_done 
+-                                    || |snq_lfb_bypass_invalid[1:0]; 
++                                    || |snq_lfb_bypass_invalid[LFB_DATA_ENTRY-1:0]; 
+ 
+ assign lfb_no_rcl_cnt_updt_val[3:0] = lfb_no_rcl_cnt[3:0]
+                                       + lfb_no_rcl_cnt_create[3:0] 
+@@ -1862,10 +1836,19 @@ assign lfb_wmb_write_req_hit_idx= |lfb_addr_entry_wmb_write_req_hit_idx[LFB_ADDR
+ //for snq
+ // &Force("output","lfb_snq_bypass_data_id"); @804
+ assign lfb_snq_bypass_hit          = |lfb_addr_entry_snq_bypass_hit[LFB_ADDR_ENTRY-1:0];
+-assign lfb_snq_bypass_data_id[1:0] = lfb_data_entry_vld[LFB_DATA_ENTRY-1:0]
+-                                     & {lfb_addr_entry_snq_bypass_hit[LFB_ADDR_ENTRY-1:0] == lfb_data_entry_addr_id_1[LFB_ADDR_ENTRY-1:0],
+-                                        lfb_addr_entry_snq_bypass_hit[LFB_ADDR_ENTRY-1:0] == lfb_data_entry_addr_id_0[LFB_ADDR_ENTRY-1:0]};
+-assign lfb_snq_bypass_share        = |(lfb_snq_bypass_data_id[1:0] & lfb_data_entry_dcache_share[1:0]);
++
++wire [LFB_DATA_ENTRY-1:0] lfb_snq_bypass_data_id_tmp;
++generate
++  for(i = 0; i < LFB_DATA_ENTRY; i=i+1) begin
++    assign lfb_snq_bypass_data_id_tmp[i] = (lfb_addr_entry_snq_bypass_hit[LFB_ADDR_ENTRY-1:0] == lfb_data_entry_addr_id[i][LFB_ADDR_ENTRY-1:0]);
++  end
++endgenerate
++
++assign lfb_snq_bypass_data_id[LFB_DATA_ENTRY-1:0] = lfb_data_entry_vld[LFB_DATA_ENTRY-1:0]
++                                     & lfb_snq_bypass_data_id_tmp[LFB_DATA_ENTRY-1:0];
++
++
++assign lfb_snq_bypass_share        = |(lfb_snq_bypass_data_id[LFB_DATA_ENTRY-1:0] & lfb_data_entry_dcache_share[LFB_DATA_ENTRY-1:0]);
+ //----------------interface to biu--------------------------
+  // make sure only the not_full signal from the data entry with the same r id with the incoming r can affect the output ready signal
+ assign lfb_data_not_full        = |((~lfb_data_entry_full[LFB_DATA_ENTRY-1:0] & lfb_data_entry_r_id_hit[LFB_DATA_ENTRY-1:0]) | ~lfb_data_entry_vld[LFB_DATA_ENTRY-1:0]);
+diff --git a/C910_RTL_FACTORY/gen_rtl/lsu/rtl/ct_lsu_snoop_snq.v b/C910_RTL_FACTORY/gen_rtl/lsu/rtl/ct_lsu_snoop_snq.v
+index fb36c06..e7da43c 100644
+--- a/C910_RTL_FACTORY/gen_rtl/lsu/rtl/ct_lsu_snoop_snq.v
++++ b/C910_RTL_FACTORY/gen_rtl/lsu/rtl/ct_lsu_snoop_snq.v
+@@ -15,7 +15,9 @@ limitations under the License.
+ 
+ `include "cpu_cfig.h"
+ 
+-module ct_lsu_snoop_snq(
++module ct_lsu_snoop_snq #(
++  parameter LFB_DATA_ENTRY = 8
++)(
+   arb_snq_entry_oldest_index,
+   arb_snq_snoop_addr,
+   arb_snq_snoop_depd,
+@@ -142,7 +144,7 @@ input            dcache_arb_snq_st_grnt;
+ input            forever_cpuclk;                     
+ input            ld_da_snq_borrow_sndb;              
+ input            ld_da_vb_snq_data_reissue;          
+-input   [1  :0]  lfb_snq_bypass_data_id;             
++input   [LFB_DATA_ENTRY-1 :0]  lfb_snq_bypass_data_id;             
+ input            lfb_snq_bypass_hit;                 
+ input            lfb_snq_bypass_share;               
+ input   [33 :0]  lfb_vb_addr_tto6;                   
+@@ -222,8 +224,8 @@ output           snq_dcache_arb_st_tag_req;
+ output  [2  :0]  snq_dcache_sdb_id;                  
+ output  [1  :0]  snq_depd_vb_id;                     
+ output           snq_empty;                          
+-output  [1  :0]  snq_lfb_bypass_chg_tag;             
+-output  [1  :0]  snq_lfb_bypass_invalid;             
++output  [LFB_DATA_ENTRY-1  :0]  snq_lfb_bypass_chg_tag;             
++output  [LFB_DATA_ENTRY-1  :0]  snq_lfb_bypass_invalid;             
+ output           snq_lfb_vb_req_hit_idx;             
+ output  [33 :0]  snq_lm_dcache_addr_tto6;            
+ output           snq_lm_dcache_req_for_inv;          
+@@ -292,7 +294,7 @@ wire    [2  :0]  idfifo_entry_id_2;
+ wire             ld_da_snq_borrow_sndb;              
+ wire             ld_da_vb_snq_data_reissue;          
+ wire    [5  :0]  lfb_bypass_vld;                     
+-wire    [1  :0]  lfb_snq_bypass_data_id;             
++wire    [LFB_DATA_ENTRY-1 :0]  lfb_snq_bypass_data_id;             
+ wire             lfb_snq_bypass_hit;                 
+ wire             lfb_snq_bypass_share;               
+ wire    [33 :0]  lfb_vb_addr_tto6;                   
+@@ -427,10 +429,8 @@ wire    [1  :0]  snq_entry_depd_vb_id_2;
+ wire    [1  :0]  snq_entry_depd_vb_id_3;             
+ wire    [1  :0]  snq_entry_depd_vb_id_4;             
+ wire    [1  :0]  snq_entry_depd_vb_id_5;             
+-wire    [5  :0]  snq_entry_lfb_bypass_chg_tag_data0; 
+-wire    [5  :0]  snq_entry_lfb_bypass_chg_tag_data1; 
+-wire    [5  :0]  snq_entry_lfb_bypass_invalid_data0; 
+-wire    [5  :0]  snq_entry_lfb_bypass_invalid_data1; 
++wire    [LFB_DATA_ENTRY-1 :0]  snq_entry_lfb_bypass_chg_tag_data [5  :0];
++wire    [LFB_DATA_ENTRY-1 :0]  snq_entry_lfb_bypass_invalid_data [5  :0];
+ wire    [5  :0]  snq_entry_lfb_vb_req_hit_idx;       
+ wire    [5  :0]  snq_entry_vb_bypass_invalid;        
+ wire    [5  :0]  snq_entry_vb_bypass_readonce;       
+@@ -441,8 +441,8 @@ wire    [33 :0]  snq_from_lfb_vb_addr_tto6;
+ wire    [39 :0]  snq_from_wmb_read_req_addr;         
+ wire    [39 :0]  snq_from_wmb_write_req_addr;        
+ wire    [5  :0]  snq_issued;                         
+-wire    [1  :0]  snq_lfb_bypass_chg_tag;             
+-wire    [1  :0]  snq_lfb_bypass_invalid;             
++wire    [LFB_DATA_ENTRY-1  :0]  snq_lfb_bypass_chg_tag;             
++wire    [LFB_DATA_ENTRY-1  :0]  snq_lfb_bypass_invalid;             
+ wire             snq_lfb_data_bypass_hit;            
+ wire             snq_lfb_vb_req_hit_idx;             
+ wire    [33 :0]  snq_lm_dcache_addr_tto6;            
+@@ -1225,11 +1225,19 @@ assign snq_vb_bypass_start[2:0] = snq_vb_bypass_id[2:0];
+ assign snq_lfb_data_bypass_hit = lfb_snq_bypass_hit && snq_dcache_snoop_tag_req_before_arb;
+ assign lfb_bypass_vld[5:0]     = {6{snq_lfb_data_bypass_hit}} & snq_dcache_snoop_tag_entry_id[5:0];
+ 
+-assign snq_lfb_bypass_invalid[1:0] = {|snq_entry_lfb_bypass_invalid_data1[5:0],
+-                                      |snq_entry_lfb_bypass_invalid_data0[5:0]};
+-
+-assign snq_lfb_bypass_chg_tag[1:0] = {|snq_entry_lfb_bypass_chg_tag_data1[5:0],
+-                                      |snq_entry_lfb_bypass_chg_tag_data0[5:0]};    
++wire    [5  :0]  snq_entry_lfb_bypass_chg_tag_data_tmp [LFB_DATA_ENTRY-1 :0];
++wire    [5  :0]  snq_entry_lfb_bypass_invalid_data_tmp [LFB_DATA_ENTRY-1 :0];
++genvar i,j;
++generate
++  for(i = 0; i < LFB_DATA_ENTRY; i=i+1) begin
++    for(j = 0; j < 6; j=j+1) begin
++      assign snq_entry_lfb_bypass_chg_tag_data_tmp[i][j] = snq_entry_lfb_bypass_invalid_data[j][i];
++      assign snq_entry_lfb_bypass_invalid_data_tmp[i][j] = snq_entry_lfb_bypass_chg_tag_data[j][i];
++    end
++    assign snq_lfb_bypass_invalid[i] = |snq_entry_lfb_bypass_chg_tag_data_tmp[i][5:0];
++    assign snq_lfb_bypass_chg_tag[i] = |snq_entry_lfb_bypass_invalid_data_tmp[i][5:0];
++  end
++endgenerate
+                                      
+ //==========================================================
+ //               snq to dcache interface
+@@ -1454,10 +1462,8 @@ ct_lsu_snoop_snq_entry  x_ct_lsu_snoop_snq_entry_0 (
+   .snq_depd_remove                       (snq_depd_remove                      ),
+   .snq_entry_bypass_db_id_v              (snq_entry_bypass_db_id_0             ),
+   .snq_entry_depd_vb_id_v                (snq_entry_depd_vb_id_0               ),
+-  .snq_entry_lfb_bypass_chg_tag_data0_x  (snq_entry_lfb_bypass_chg_tag_data0[0]),
+-  .snq_entry_lfb_bypass_chg_tag_data1_x  (snq_entry_lfb_bypass_chg_tag_data1[0]),
+-  .snq_entry_lfb_bypass_invalid_data0_x  (snq_entry_lfb_bypass_invalid_data0[0]),
+-  .snq_entry_lfb_bypass_invalid_data1_x  (snq_entry_lfb_bypass_invalid_data1[0]),
++  .snq_entry_lfb_bypass_chg_tag_data_x   (snq_entry_lfb_bypass_chg_tag_data[0] ),
++  .snq_entry_lfb_bypass_invalid_data_x   (snq_entry_lfb_bypass_invalid_data[0] ),
+   .snq_entry_lfb_vb_req_hit_idx_x        (snq_entry_lfb_vb_req_hit_idx[0]      ),
+   .snq_entry_vb_bypass_invalid_x         (snq_entry_vb_bypass_invalid[0]       ),
+   .snq_entry_vb_bypass_readonce_x        (snq_entry_vb_bypass_readonce[0]      ),
+@@ -1521,10 +1527,8 @@ ct_lsu_snoop_snq_entry  x_ct_lsu_snoop_snq_entry_1 (
+   .snq_depd_remove                       (snq_depd_remove                      ),
+   .snq_entry_bypass_db_id_v              (snq_entry_bypass_db_id_1             ),
+   .snq_entry_depd_vb_id_v                (snq_entry_depd_vb_id_1               ),
+-  .snq_entry_lfb_bypass_chg_tag_data0_x  (snq_entry_lfb_bypass_chg_tag_data0[1]),
+-  .snq_entry_lfb_bypass_chg_tag_data1_x  (snq_entry_lfb_bypass_chg_tag_data1[1]),
+-  .snq_entry_lfb_bypass_invalid_data0_x  (snq_entry_lfb_bypass_invalid_data0[1]),
+-  .snq_entry_lfb_bypass_invalid_data1_x  (snq_entry_lfb_bypass_invalid_data1[1]),
++  .snq_entry_lfb_bypass_chg_tag_data_x   (snq_entry_lfb_bypass_chg_tag_data[1] ),
++  .snq_entry_lfb_bypass_invalid_data_x   (snq_entry_lfb_bypass_invalid_data[1] ),
+   .snq_entry_lfb_vb_req_hit_idx_x        (snq_entry_lfb_vb_req_hit_idx[1]      ),
+   .snq_entry_vb_bypass_invalid_x         (snq_entry_vb_bypass_invalid[1]       ),
+   .snq_entry_vb_bypass_readonce_x        (snq_entry_vb_bypass_readonce[1]      ),
+@@ -1588,10 +1592,8 @@ ct_lsu_snoop_snq_entry  x_ct_lsu_snoop_snq_entry_2 (
+   .snq_depd_remove                       (snq_depd_remove                      ),
+   .snq_entry_bypass_db_id_v              (snq_entry_bypass_db_id_2             ),
+   .snq_entry_depd_vb_id_v                (snq_entry_depd_vb_id_2               ),
+-  .snq_entry_lfb_bypass_chg_tag_data0_x  (snq_entry_lfb_bypass_chg_tag_data0[2]),
+-  .snq_entry_lfb_bypass_chg_tag_data1_x  (snq_entry_lfb_bypass_chg_tag_data1[2]),
+-  .snq_entry_lfb_bypass_invalid_data0_x  (snq_entry_lfb_bypass_invalid_data0[2]),
+-  .snq_entry_lfb_bypass_invalid_data1_x  (snq_entry_lfb_bypass_invalid_data1[2]),
++  .snq_entry_lfb_bypass_chg_tag_data_x   (snq_entry_lfb_bypass_chg_tag_data[2] ),
++  .snq_entry_lfb_bypass_invalid_data_x   (snq_entry_lfb_bypass_invalid_data[2] ),
+   .snq_entry_lfb_vb_req_hit_idx_x        (snq_entry_lfb_vb_req_hit_idx[2]      ),
+   .snq_entry_vb_bypass_invalid_x         (snq_entry_vb_bypass_invalid[2]       ),
+   .snq_entry_vb_bypass_readonce_x        (snq_entry_vb_bypass_readonce[2]      ),
+@@ -1655,10 +1657,8 @@ ct_lsu_snoop_snq_entry  x_ct_lsu_snoop_snq_entry_3 (
+   .snq_depd_remove                       (snq_depd_remove                      ),
+   .snq_entry_bypass_db_id_v              (snq_entry_bypass_db_id_3             ),
+   .snq_entry_depd_vb_id_v                (snq_entry_depd_vb_id_3               ),
+-  .snq_entry_lfb_bypass_chg_tag_data0_x  (snq_entry_lfb_bypass_chg_tag_data0[3]),
+-  .snq_entry_lfb_bypass_chg_tag_data1_x  (snq_entry_lfb_bypass_chg_tag_data1[3]),
+-  .snq_entry_lfb_bypass_invalid_data0_x  (snq_entry_lfb_bypass_invalid_data0[3]),
+-  .snq_entry_lfb_bypass_invalid_data1_x  (snq_entry_lfb_bypass_invalid_data1[3]),
++  .snq_entry_lfb_bypass_chg_tag_data_x   (snq_entry_lfb_bypass_chg_tag_data[3] ),
++  .snq_entry_lfb_bypass_invalid_data_x   (snq_entry_lfb_bypass_invalid_data[3] ),
+   .snq_entry_lfb_vb_req_hit_idx_x        (snq_entry_lfb_vb_req_hit_idx[3]      ),
+   .snq_entry_vb_bypass_invalid_x         (snq_entry_vb_bypass_invalid[3]       ),
+   .snq_entry_vb_bypass_readonce_x        (snq_entry_vb_bypass_readonce[3]      ),
+@@ -1722,10 +1722,8 @@ ct_lsu_snoop_snq_entry  x_ct_lsu_snoop_snq_entry_4 (
+   .snq_depd_remove                       (snq_depd_remove                      ),
+   .snq_entry_bypass_db_id_v              (snq_entry_bypass_db_id_4             ),
+   .snq_entry_depd_vb_id_v                (snq_entry_depd_vb_id_4               ),
+-  .snq_entry_lfb_bypass_chg_tag_data0_x  (snq_entry_lfb_bypass_chg_tag_data0[4]),
+-  .snq_entry_lfb_bypass_chg_tag_data1_x  (snq_entry_lfb_bypass_chg_tag_data1[4]),
+-  .snq_entry_lfb_bypass_invalid_data0_x  (snq_entry_lfb_bypass_invalid_data0[4]),
+-  .snq_entry_lfb_bypass_invalid_data1_x  (snq_entry_lfb_bypass_invalid_data1[4]),
++  .snq_entry_lfb_bypass_chg_tag_data_x   (snq_entry_lfb_bypass_chg_tag_data[4] ),
++  .snq_entry_lfb_bypass_invalid_data_x   (snq_entry_lfb_bypass_invalid_data[4] ),
+   .snq_entry_lfb_vb_req_hit_idx_x        (snq_entry_lfb_vb_req_hit_idx[4]      ),
+   .snq_entry_vb_bypass_invalid_x         (snq_entry_vb_bypass_invalid[4]       ),
+   .snq_entry_vb_bypass_readonce_x        (snq_entry_vb_bypass_readonce[4]      ),
+@@ -1789,10 +1787,8 @@ ct_lsu_snoop_snq_entry  x_ct_lsu_snoop_snq_entry_5 (
+   .snq_depd_remove                       (snq_depd_remove                      ),
+   .snq_entry_bypass_db_id_v              (snq_entry_bypass_db_id_5             ),
+   .snq_entry_depd_vb_id_v                (snq_entry_depd_vb_id_5               ),
+-  .snq_entry_lfb_bypass_chg_tag_data0_x  (snq_entry_lfb_bypass_chg_tag_data0[5]),
+-  .snq_entry_lfb_bypass_chg_tag_data1_x  (snq_entry_lfb_bypass_chg_tag_data1[5]),
+-  .snq_entry_lfb_bypass_invalid_data0_x  (snq_entry_lfb_bypass_invalid_data0[5]),
+-  .snq_entry_lfb_bypass_invalid_data1_x  (snq_entry_lfb_bypass_invalid_data1[5]),
++  .snq_entry_lfb_bypass_chg_tag_data_x   (snq_entry_lfb_bypass_chg_tag_data[5] ),
++  .snq_entry_lfb_bypass_invalid_data_x   (snq_entry_lfb_bypass_invalid_data[5] ),
+   .snq_entry_lfb_vb_req_hit_idx_x        (snq_entry_lfb_vb_req_hit_idx[5]      ),
+   .snq_entry_vb_bypass_invalid_x         (snq_entry_vb_bypass_invalid[5]       ),
+   .snq_entry_vb_bypass_readonce_x        (snq_entry_vb_bypass_readonce[5]      ),
+diff --git a/C910_RTL_FACTORY/gen_rtl/lsu/rtl/ct_lsu_snoop_snq_entry.v b/C910_RTL_FACTORY/gen_rtl/lsu/rtl/ct_lsu_snoop_snq_entry.v
+index b4368d0..db179d5 100644
+--- a/C910_RTL_FACTORY/gen_rtl/lsu/rtl/ct_lsu_snoop_snq_entry.v
++++ b/C910_RTL_FACTORY/gen_rtl/lsu/rtl/ct_lsu_snoop_snq_entry.v
+@@ -15,7 +15,9 @@ limitations under the License.
+ 
+ `include "cpu_cfig.h"
+ 
+-module ct_lsu_snoop_snq_entry(
++module ct_lsu_snoop_snq_entry #(
++  parameter LFB_DATA_ENTRY = 8
++)(
+   arb_snq_entry_oldest_index_x,
+   biu_snq_cr_resp_acept_x,
+   cp0_lsu_icg_en,
+@@ -42,10 +44,8 @@ module ct_lsu_snoop_snq_entry(
+   snq_depd_remove,
+   snq_entry_bypass_db_id_v,
+   snq_entry_depd_vb_id_v,
+-  snq_entry_lfb_bypass_chg_tag_data0_x,
+-  snq_entry_lfb_bypass_chg_tag_data1_x,
+-  snq_entry_lfb_bypass_invalid_data0_x,
+-  snq_entry_lfb_bypass_invalid_data1_x,
++  snq_entry_lfb_bypass_chg_tag_data_x,
++  snq_entry_lfb_bypass_invalid_data_x,
+   snq_entry_lfb_vb_req_hit_idx_x,
+   snq_entry_vb_bypass_invalid_x,
+   snq_entry_vb_bypass_readonce_x,
+@@ -89,7 +89,7 @@ input           dcache_snq_tag_resp_share;
+ input           dcache_snq_tag_resp_valid;           
+ input           dcache_snq_tag_resp_way;             
+ input           lfb_bypass_vld_x;                    
+-input   [1 :0]  lfb_snq_bypass_data_id;              
++input   [LFB_DATA_ENTRY-1 :0]  lfb_snq_bypass_data_id;              
+ input           lfb_snq_bypass_share;                
+ input   [33:0]  lfb_vb_addr_tto6;                    
+ input           lsu_snoop_clk;                       
+@@ -115,10 +115,8 @@ output          snpt_snpdt_start_x;
+ output          snq_cr_resp_valid_x;                 
+ output  [2 :0]  snq_entry_bypass_db_id_v;            
+ output  [1 :0]  snq_entry_depd_vb_id_v;              
+-output          snq_entry_lfb_bypass_chg_tag_data0_x; 
+-output          snq_entry_lfb_bypass_chg_tag_data1_x; 
+-output          snq_entry_lfb_bypass_invalid_data0_x; 
+-output          snq_entry_lfb_bypass_invalid_data1_x; 
++output  [LFB_DATA_ENTRY-1 :0] snq_entry_lfb_bypass_chg_tag_data_x;            
++output  [LFB_DATA_ENTRY-1 :0] snq_entry_lfb_bypass_invalid_data_x;            
+ output          snq_entry_lfb_vb_req_hit_idx_x;      
+ output          snq_entry_vb_bypass_invalid_x;       
+ output          snq_entry_vb_bypass_readonce_x;      
+@@ -146,7 +144,7 @@ reg     [35:0]  snq_addr;
+ reg     [9 :0]  snq_depd;                            
+ reg     [2 :0]  snq_entry_bypass_db_id;              
+ reg             snq_entry_bypass_dcache_share;       
+-reg     [1 :0]  snq_entry_bypass_lfb_data_id;        
++reg     [LFB_DATA_ENTRY-1 :0]  snq_entry_bypass_lfb_data_id;        
+ reg             snq_issued;                          
+ reg             snq_need_chg_tag_ff;                 
+ reg             snq_need_chg_tag_i_ff;               
+@@ -181,14 +179,12 @@ wire            dcache_snq_tag_resp_way;
+ wire            error;                               
+ wire            is_shared;                           
+ wire            lfb_bypass_chg_tag;                  
+-wire            lfb_bypass_chg_tag_data0;            
+-wire            lfb_bypass_chg_tag_data1;            
++wire    [LFB_DATA_ENTRY-1 :0] lfb_bypass_chg_tag_data;            
+ wire            lfb_bypass_invalid;                  
+-wire            lfb_bypass_invalid_data0;            
+-wire            lfb_bypass_invalid_data1;            
++wire    [LFB_DATA_ENTRY-1 :0] lfb_bypass_invalid_data;            
+ wire            lfb_bypass_vld;                      
+ wire            lfb_bypass_vld_x;                    
+-wire    [1 :0]  lfb_snq_bypass_data_id;              
++wire    [LFB_DATA_ENTRY-1 :0]  lfb_snq_bypass_data_id;              
+ wire            lfb_snq_bypass_share;                
+ wire    [33:0]  lfb_vb_addr_tto6;                    
+ wire            lsu_snoop_clk;                       
+@@ -219,10 +215,8 @@ wire    [39:0]  snq_entry_cmp_wmb_write_req_addr;
+ wire    [1 :0]  snq_entry_depd_vb_id;                
+ wire    [1 :0]  snq_entry_depd_vb_id_v;              
+ wire    [39:0]  snq_entry_from_snq_create_addr;      
+-wire            snq_entry_lfb_bypass_chg_tag_data0_x; 
+-wire            snq_entry_lfb_bypass_chg_tag_data1_x; 
+-wire            snq_entry_lfb_bypass_invalid_data0_x; 
+-wire            snq_entry_lfb_bypass_invalid_data1_x; 
++wire    [LFB_DATA_ENTRY-1 :0] snq_entry_lfb_bypass_chg_tag_data_x;            
++wire    [LFB_DATA_ENTRY-1 :0] snq_entry_lfb_bypass_invalid_data_x;            
+ wire            snq_entry_lfb_vb_req_hit_idx;        
+ wire            snq_entry_lfb_vb_req_hit_idx_x;      
+ wire            snq_entry_vb_bypass_invalid_x;       
+@@ -392,12 +386,12 @@ assign vb_bypass_invalid = vb_bypass_mode
+  begin
+    if(~cpurst_b)
+    begin
+-     snq_entry_bypass_lfb_data_id[1:0] <= 2'b0;
++     snq_entry_bypass_lfb_data_id[LFB_DATA_ENTRY-1:0] <= {LFB_DATA_ENTRY{1'b0}};
+      snq_entry_bypass_dcache_share     <= 1'b0;
+    end
+    else if(lfb_bypass_vld)
+    begin
+-     snq_entry_bypass_lfb_data_id[1:0] <= lfb_snq_bypass_data_id[1:0];
++     snq_entry_bypass_lfb_data_id[LFB_DATA_ENTRY-1:0] <= lfb_snq_bypass_data_id[LFB_DATA_ENTRY-1:0];
+      snq_entry_bypass_dcache_share     <= lfb_snq_bypass_share;
+    end
+  end
+@@ -414,11 +408,13 @@ assign lfb_bypass_chg_tag = lfb_bypass_mode
+                             && snq_need_chg_tag_s_ff
+                             && arb_snq_entry_oldest_index;
+ 
+-assign lfb_bypass_invalid_data0 = lfb_bypass_invalid && snq_entry_bypass_lfb_data_id[0];
+-assign lfb_bypass_invalid_data1 = lfb_bypass_invalid && snq_entry_bypass_lfb_data_id[1];
+-
+-assign lfb_bypass_chg_tag_data0 = lfb_bypass_chg_tag && snq_entry_bypass_lfb_data_id[0];
+-assign lfb_bypass_chg_tag_data1 = lfb_bypass_chg_tag && snq_entry_bypass_lfb_data_id[1];
++genvar i,j;
++generate
++  for(i = 0; i < LFB_DATA_ENTRY; i=i+1) begin
++    assign lfb_bypass_invalid_data[i] = lfb_bypass_invalid && snq_entry_bypass_lfb_data_id[i];
++    assign lfb_bypass_chg_tag_data[i] = lfb_bypass_chg_tag && snq_entry_bypass_lfb_data_id[i];
++  end
++endgenerate
+ //--------------------------------------
+ //addr/type/prot
+ assign snq_entry_from_snq_create_addr[`PA_WIDTH-1:0] = snq_create_addr[`PA_WIDTH-1:0];
+@@ -940,10 +936,8 @@ assign snq_entry_bypass_db_id_v[2:0] = snq_entry_bypass_db_id[2:0];
+ //for evict deadlock
+ assign snq_entry_depd_vb_id_v[1:0] = snq_entry_depd_vb_id[1:0];
+ 
+-assign snq_entry_lfb_bypass_invalid_data0_x = lfb_bypass_invalid_data0;
+-assign snq_entry_lfb_bypass_invalid_data1_x = lfb_bypass_invalid_data1;
+-assign snq_entry_lfb_bypass_chg_tag_data0_x = lfb_bypass_chg_tag_data0;
+-assign snq_entry_lfb_bypass_chg_tag_data1_x = lfb_bypass_chg_tag_data1;
++assign snq_entry_lfb_bypass_chg_tag_data_x = lfb_bypass_invalid_data;
++assign snq_entry_lfb_bypass_invalid_data_x = lfb_bypass_chg_tag_data;
+ //--------------------------------------
+ //hit idx
+ assign snq_entry_wmb_write_req_hit_idx_x  = snq_entry_wmb_write_req_hit_idx;
+diff --git a/C910_RTL_FACTORY/gen_rtl/lsu/rtl/ct_lsu_top.v b/C910_RTL_FACTORY/gen_rtl/lsu/rtl/ct_lsu_top.v
+index 4130e95..0b36b07 100644
+--- a/C910_RTL_FACTORY/gen_rtl/lsu/rtl/ct_lsu_top.v
++++ b/C910_RTL_FACTORY/gen_rtl/lsu/rtl/ct_lsu_top.v
+@@ -14,7 +14,9 @@ limitations under the License.
+ */
+ 
+ // &ModuleBeg; @24
+-module ct_lsu_top(
++module ct_lsu_top #(
++  parameter LFB_DATA_ENTRY = 8
++)(
+   biu_lsu_ac_addr,
+   biu_lsu_ac_prot,
+   biu_lsu_ac_req,
+@@ -791,7 +793,7 @@ output           lsu_biu_w_vict_wns;
+ output           lsu_cp0_dcache_done;                    
+ output  [127:0]  lsu_cp0_dcache_read_data;               
+ output           lsu_cp0_dcache_read_data_vld;           
+-output  [183:0]  lsu_had_debug_info;                     
++output  [183-2*2+LFB_DATA_ENTRY*2:0]  lsu_had_debug_info;                     
+ output  [39 :0]  lsu_had_ld_addr;                        
+ output  [63 :0]  lsu_had_ld_data;                        
+ output  [6  :0]  lsu_had_ld_iid;                         
+@@ -1586,7 +1588,7 @@ wire             lfb_rb_biu_req_hit_idx;
+ wire             lfb_rb_ca_rready_grnt;                  
+ wire    [4  :0]  lfb_rb_create_id;                       
+ wire             lfb_rb_nc_rready_grnt;                  
+-wire    [1  :0]  lfb_snq_bypass_data_id;                 
++wire    [LFB_DATA_ENTRY-1 :0]  lfb_snq_bypass_data_id;                 
+ wire             lfb_snq_bypass_hit;                     
+ wire             lfb_snq_bypass_share;                   
+ wire             lfb_st_da_hit_idx;                      
+@@ -1719,7 +1721,7 @@ wire    [1  :0]  lsu_had_cdr_state;
+ wire    [5  :0]  lsu_had_ctcq_entry_2_cmplt;             
+ wire    [5  :0]  lsu_had_ctcq_entry_cmplt;               
+ wire    [5  :0]  lsu_had_ctcq_entry_vld;                 
+-wire    [183:0]  lsu_had_debug_info;                     
++wire    [183-2*2+LFB_DATA_ENTRY*2:0]  lsu_had_debug_info;                     
+ wire    [2  :0]  lsu_had_icc_state;                      
+ wire    [39 :0]  lsu_had_ld_addr;                        
+ wire    [63 :0]  lsu_had_ld_data;                        
+@@ -1729,8 +1731,8 @@ wire    [3  :0]  lsu_had_ld_type;
+ wire    [7  :0]  lsu_had_lfb_addr_entry_dcache_hit;      
+ wire    [7  :0]  lsu_had_lfb_addr_entry_rcl_done;        
+ wire    [7  :0]  lsu_had_lfb_addr_entry_vld;             
+-wire    [1  :0]  lsu_had_lfb_data_entry_last;            
+-wire    [1  :0]  lsu_had_lfb_data_entry_vld;             
++wire    [LFB_DATA_ENTRY-1 :0]  lsu_had_lfb_data_entry_last;            
++wire    [LFB_DATA_ENTRY-1 :0]  lsu_had_lfb_data_entry_vld;             
+ wire             lsu_had_lfb_lf_sm_vld;                  
+ wire    [12 :0]  lsu_had_lfb_wakeup_queue;               
+ wire    [2  :0]  lsu_had_lm_state;                       
+@@ -2200,8 +2202,8 @@ wire             snq_dcache_arb_st_tag_req;
+ wire    [2  :0]  snq_dcache_sdb_id;                      
+ wire    [1  :0]  snq_depd_vb_id;                         
+ wire             snq_empty;                              
+-wire    [1  :0]  snq_lfb_bypass_chg_tag;                 
+-wire    [1  :0]  snq_lfb_bypass_invalid;                 
++wire    [LFB_DATA_ENTRY-1  :0]  snq_lfb_bypass_chg_tag;                 
++wire    [LFB_DATA_ENTRY-1  :0]  snq_lfb_bypass_invalid;                 
+ wire             snq_lfb_vb_req_hit_idx;                 
+ wire    [33 :0]  snq_lm_dcache_addr_tto6;                
+ wire             snq_lm_dcache_req_for_inv;              
+-- 
+2.39.3
+

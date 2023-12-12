@@ -387,6 +387,7 @@ wire    [2  :0]  vict_awsnoop;
 wire             vict_awunique;                       
 wire             vict_awuser;                         
 wire             vict_awvalid;                        
+wire             vict_awvalid_no_cur_st_awvalid;      
 wire             vict_awvalid_gate;                   
 wire             vict_w_clk_en;                       
 wire             vict_wcpuclk;                        
@@ -422,7 +423,7 @@ assign aw_ws       = ((cur_waddr_buf_awsnoop[2:0] == WU) ||
 
 assign pad_awready = aw_ws & pad_biu_ws_awready | !aw_ws & pad_biu_wns_awready;
 
-assign vict_awready = !cur_waddr_vict_awvalid;
+assign vict_awready = !cur_waddr_vict_awvalid & !cur_waddr_st_awvalid;
 assign st_awready   = !cur_waddr_st_awvalid;
 
 //**********************************************************
@@ -517,11 +518,18 @@ begin
 // &CombEnd; @109
 end
 
+// forcing the LSU to wait until the last valid aw req to handshake before 
+// it moves to the next aw request, even if the following aw request has 
+// higher priority  (evict has priority over the regular store).
+// Or it may change the aw request before the last valid aw request gets 
+// handshakes, which confused the following pulp axi IPs.
+assign vict_awvalid_no_cur_st_awvalid = vict_awvalid & ~cur_waddr_st_awvalid;
+
 always @(posedge vict_awcpuclk or negedge cpurst_b)
 begin
   if(~cpurst_b)
     cur_waddr_vict_awvalid <= 1'b0;
-  else if(vict_awvalid && !cur_waddr_vict_awvalid)
+  else if(vict_awvalid_no_cur_st_awvalid && !cur_waddr_vict_awvalid)
     cur_waddr_vict_awvalid <= 1'b1;
   else if(pad_biu_wns_awready && cur_waddr_vict_awvalid)
     cur_waddr_vict_awvalid <= 1'b0;

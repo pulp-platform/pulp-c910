@@ -14,7 +14,9 @@ limitations under the License.
 */
 
 // &ModuleBeg; @23
-module ct_had_private_top(
+module ct_had_private_top #(
+  parameter LFB_DATA_ENTRY = 8
+)(
   biu_had_coreid,
   biu_had_sdb_req_b,
   cp0_had_cpuid_0,
@@ -190,7 +192,7 @@ input            ifu_had_no_op;
 input            ifu_had_reset_on;               
 input   [63 :0]  ir_corex_wdata;                 
 input   [9  :0]  iu_had_debug_info;              
-input   [183:0]  lsu_had_debug_info;             
+input   [183-2*2+LFB_DATA_ENTRY*2:0]  lsu_had_debug_info;             
 input   [39 :0]  lsu_had_ld_addr;                
 input   [63 :0]  lsu_had_ld_data;                
 input   [6  :0]  lsu_had_ld_iid;                 
@@ -450,7 +452,7 @@ wire             ir_xx_pipesel_reg_sel;
 wire             ir_xx_wbbr_reg_sel;             
 wire    [63 :0]  ir_xx_wdata;                    
 wire    [9  :0]  iu_had_debug_info;              
-wire    [183:0]  lsu_had_debug_info;             
+wire    [183-2*2+LFB_DATA_ENTRY*2:0]  lsu_had_debug_info;             
 wire             lsu_had_no_op;                  
 wire    [39 :0]  lsu_had_st_addr;                
 wire    [63 :0]  lsu_had_st_data;                

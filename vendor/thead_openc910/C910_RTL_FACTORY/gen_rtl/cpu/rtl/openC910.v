@@ -123,7 +123,13 @@ module openC910(
   pad_yy_scan_enable,
   pad_yy_scan_mode,
   pad_yy_scan_rst_b,
-  pll_cpu_clk
+  pll_cpu_clk,
+  // clint
+  ipi_i,
+  time_irq_i,
+  // plic
+  plic_hartx_mint_req_i,
+  plic_hartx_sint_req_i
 );
 
 // &Ports("compare", "../../../gen_rtl/cpu/rtl/mp_top_golden_port.v"); @42
@@ -169,6 +175,14 @@ input            pad_yy_scan_enable;
 input            pad_yy_scan_mode;              
 input            pad_yy_scan_rst_b;             
 input            pll_cpu_clk;                   
+  // clint
+input            ipi_i;
+input            time_irq_i;
+  // plic
+input   [1  :0]  plic_hartx_mint_req_i;
+input   [1  :0]  plic_hartx_sint_req_i;
+
+
 output  [39 :0]  biu_pad_araddr;                
 output  [1  :0]  biu_pad_arburst;               
 output  [3  :0]  biu_pad_arcache;               
@@ -644,11 +658,15 @@ wire             plic_core0_me_int;
 wire             plic_core0_se_int;             
 wire             plic_core1_me_int;             
 wire             plic_core1_se_int;             
-wire    [1  :0]  plic_hartx_mint_req;           
-wire    [1  :0]  plic_hartx_sint_req;           
+wire    [1  :0]  plic_hartx_mint_req_i;
+wire    [1  :0]  plic_hartx_sint_req_i;
 wire    [159:0]  plic_int_cfg;                  
 wire    [159:0]  plic_int_vld;                  
 wire             pll_cpu_clk;                   
+  // clint
+wire             ipi_i;
+wire             time_irq_i;
+
 wire    [1  :0]  pprot;                         
 wire    [31 :0]  prdata_clint;                  
 wire    [31 :0]  prdata_had;                    
@@ -688,43 +706,169 @@ wire    [39 :0]  sysio_xx_apb_base;
 wire    [63 :0]  sysio_xx_time;                 
 wire             trst_b;                        
 
-
-
-//==========================================================
-//  reset management unit
-//==========================================================
-// &Instance("ct_rmu_top","x_rmu_top"); @66
-// &Instance("ct_rmu_top_dummy", "x_rmu_top"); @68
-ct_rmu_top_dummy  x_rmu_top (
-  .apb_clk    (apb_clk   ),
-  .apbrst_b   (apbrst_b  ),
-  .penable    (penable   ),
-  .perr_rmr   (perr_rmr  ),
-  .prdata_rmr (prdata_rmr),
-  .pready_rmr (pready_rmr),
-  .psel_rmr   (psel_rmr  )
-);
-
-//==========================================================
-//  PMU port
-//==========================================================
-// &Force("input", "pad_cpu_sleep_in"); @74
-// &Force("output", "cpu_pad_sleep_out"); @75
-// &Force("input","pad_core0_iso_en"); @77
-// &Force("input","pad_core1_iso_en"); @80
-// &Force("input","pad_core2_iso_en"); @83
-// &Force("input","pad_core3_iso_en"); @86
 //==========================================================
 //  Instance top module
 //==========================================================
-// &ConnRule(s/biu_/ibiu0_/); @92
+assign pad_ibiu0_ms_int = ipi_i;
+assign pad_ibiu0_mt_int = time_irq_i;
+
+assign pad_ibiu0_ss_int = 1'b0;
+assign pad_ibiu0_st_int = 1'b0;
+
+assign pad_ibiu0_me_int = plic_hartx_mint_req_i[0];
+assign pad_ibiu0_se_int = plic_hartx_sint_req_i[0];
+assign pad_ibiu1_me_int = plic_hartx_mint_req_i[1];
+assign pad_ibiu1_se_int = plic_hartx_sint_req_i[1];
+
+// core ace output
+assign ibiu0_pad_acready = 1'b1;
+assign ibiu0_pad_cddata  = 128'b0;
+assign ibiu0_pad_cderr   = 1'b0;
+assign ibiu0_pad_cdlast  = 1'b0;
+assign ibiu0_pad_cdvalid = 1'b0;
+assign ibiu0_pad_crresp  = 5'b0;
+assign ibiu0_pad_crvalid = pad_ibiu0_acvalid;
+
+// core axi output
+wire awsnoop_evict;
+wire [39 :0] awsnoop_evict_awaddr;
+wire [7  :0] awsnoop_evict_awlen;
+wire [2  :0] awsnoop_evict_awsize;
+
+wire awsnoop_evict_w_valid;
+wire awsnoop_evict_w_ready;
+wire awsnoop_evict_w_last;
+wire awsnoop_evict_aw_valid;
+wire awsnoop_evict_aw_ready;
+
+reg  wsnoop_en;
+
+reg dummy_w_req_vld_d, dummy_w_req_vld_q;
+reg dummy_w_req_vld_en;
+
+  // record the number of handshaked aw but unsent w burst
+wire [8-1:0] unsent_w_cnt_d;
+reg  [8-1:0] unsent_w_cnt_q;
+wire unsent_w_cnt_en;
+
+wire in_aw_hsk;
+wire out_w_hsk;
+
+assign unsent_w_cnt_d  = unsent_w_cnt_q + (in_aw_hsk ? ((&biu_pad_awlen[1:0]) ? 4 : 1) : 0)
+                                        - (out_w_hsk ? 1 : 0);
+assign unsent_w_cnt_en = out_w_hsk | in_aw_hsk;
+
+assign out_w_hsk = biu_pad_wvalid & pad_biu_wready;
+assign in_aw_hsk = biu_pad_awvalid & pad_biu_awready;
+
+  // evict snoop
+assign awsnoop_evict = (ibiu0_pad_awsnoop[2  :0] == 3'h4);
+assign awsnoop_evict_awaddr = 40'h40000;
+assign awsnoop_evict_awlen  = 8'h0;
+assign awsnoop_evict_awsize = 3'b0;
+
+assign awsnoop_evict_w_valid  = 1'b1;
+assign awsnoop_evict_w_ready  = 1'b0;
+assign awsnoop_evict_w_last   = 1'b1;
+assign awsnoop_evict_aw_valid = 1'b0;
+assign awsnoop_evict_aw_ready = 1'b0;
+
+always @(*) begin
+  dummy_w_req_vld_d   = dummy_w_req_vld_q;
+  dummy_w_req_vld_en  = 1'b0;
+  wsnoop_en  = 1'b0;
+  
+  case (dummy_w_req_vld_q)
+    1'b0: begin
+      if(in_aw_hsk & awsnoop_evict) begin
+        dummy_w_req_vld_d   = 1'b1;
+        dummy_w_req_vld_en  = 1'b1;
+      end
+    end
+    1'b1: begin
+      if(unsent_w_cnt_q == 8'b1) begin // no inflight w transaction other than the fake w for evict snoop
+        wsnoop_en = 1'b1;
+        if(out_w_hsk) begin
+          dummy_w_req_vld_d   = 1'b0;
+          dummy_w_req_vld_en  = 1'b1;
+        end
+      end
+    end
+    default:;
+  endcase
+end
+
+always @(posedge forever_core0_clk or negedge pad_cpu_rst_b) begin
+  if(!pad_cpu_rst_b) begin
+    dummy_w_req_vld_q <= 1'b0;
+  end else begin
+    if(dummy_w_req_vld_en) begin
+      dummy_w_req_vld_q <= dummy_w_req_vld_d;
+    end
+  end
+end
+
+always @(posedge forever_core0_clk or negedge pad_cpu_rst_b) begin
+  if(!pad_cpu_rst_b) begin
+    unsent_w_cnt_q <= 8'b0;
+  end else begin
+    if(unsent_w_cnt_en) begin
+      unsent_w_cnt_q <= unsent_w_cnt_d;
+    end
+  end
+end
+
+assign biu_pad_araddr     [39 :0] = ibiu0_pad_araddr  [39 :0];
+assign biu_pad_arburst    [1  :0] = ibiu0_pad_arburst [1  :0];
+assign biu_pad_arcache    [3  :0] = ibiu0_pad_arcache [3  :0];
+assign biu_pad_arid       [7  :0] = {3'b0, ibiu0_pad_arid    [4  :0]};
+assign biu_pad_arlen      [7  :0] = {6'b0, ibiu0_pad_arlen   [1  :0]};
+assign biu_pad_arlock             = ibiu0_pad_arlock         ;
+assign biu_pad_arprot     [2  :0] = ibiu0_pad_arprot  [2  :0];
+assign biu_pad_arsize     [2  :0] = ibiu0_pad_arsize  [2  :0];
+assign biu_pad_arvalid            = ibiu0_pad_arvalid        ;
+assign biu_pad_awaddr     [39 :0] = awsnoop_evict ? awsnoop_evict_awaddr : ibiu0_pad_awaddr  [39 :0]; // redirect the Evict req to the ACE convert module
+assign biu_pad_awburst    [1  :0] = ibiu0_pad_awburst [1  :0];
+assign biu_pad_awcache    [3  :0] = ibiu0_pad_awcache [3  :0];
+assign biu_pad_awid       [7  :0] = {3'b0, ibiu0_pad_awid    [4  :0]};
+assign biu_pad_awlen      [7  :0] = awsnoop_evict ? awsnoop_evict_awlen : {6'b0, ibiu0_pad_awlen   [1  :0]};
+assign biu_pad_awlock             = ibiu0_pad_awlock         ;
+assign biu_pad_awprot     [2  :0] = ibiu0_pad_awprot  [2  :0];
+assign biu_pad_awsize     [2  :0] = awsnoop_evict ? awsnoop_evict_awsize : ibiu0_pad_awsize  [2  :0];
+assign biu_pad_awvalid            = dummy_w_req_vld_q ? awsnoop_evict_aw_valid : ibiu0_pad_awvalid        ;
+assign biu_pad_bready             = ibiu0_pad_bready         ;
+assign biu_pad_rready             = ibiu0_pad_rready         ;
+assign biu_pad_wdata      [127:0] = ibiu0_pad_wdata   [127:0];
+assign biu_pad_wlast              = wsnoop_en ? awsnoop_evict_w_last : ibiu0_pad_wlast          ;
+assign biu_pad_wstrb      [15 :0] = ibiu0_pad_wstrb   [15 :0];
+assign biu_pad_wvalid             = wsnoop_en ? awsnoop_evict_w_valid : ibiu0_pad_wvalid         ;
+
+// core axi input
+assign pad_ibiu0_arready          = pad_biu_arready          ;
+assign pad_ibiu0_rdata    [127:0] = pad_biu_rdata     [127:0];
+assign pad_ibiu0_rid      [4  :0] = pad_biu_rid       [4  :0];
+assign pad_ibiu0_rlast            = pad_biu_rlast            ;
+assign pad_ibiu0_rresp    [3  :0] = {2'b0, pad_biu_rresp     [1  :0]};
+assign pad_ibiu0_rvalid           = pad_biu_rvalid           ;
+assign pad_ibiu0_bid      [4  :0] = pad_biu_bid       [4  :0];
+assign pad_ibiu0_bresp    [1  :0] = pad_biu_bresp     [1  :0];
+assign pad_ibiu0_bvalid           = pad_biu_bvalid           ;
+
+assign pad_ibiu0_awready            = dummy_w_req_vld_q ? awsnoop_evict_aw_ready : pad_biu_awready          ;
+assign pad_ibiu0_wns_awready        = pad_ibiu0_awready        ;
+assign pad_ibiu0_ws_awready         = pad_ibiu0_awready        ;
+
+assign pad_ibiu0_wready             = wsnoop_en ? awsnoop_evict_w_ready : pad_biu_wready           ;
+assign pad_ibiu0_wns_wready         = pad_ibiu0_wready         ;
+assign pad_ibiu0_ws_wready          = pad_ibiu0_wready         ;
+
 // &ConnRule(s/rtu_/core0_/); @93
 // &ConnRule(s/idu_/core0_/); @94
 // &ConnRule(s/cp0_/core0_/); @95
 // &ConnRule(s/^x_/core0_/); @96
 // &Instance("ct_top", "x_ct_top_0"); @97
 ct_top  x_ct_top_0 (
-  .biu_pad_acready         (ibiu0_pad_acready      ),
+  .biu_pad_acready         (      ),
   .biu_pad_araddr          (ibiu0_pad_araddr       ),
   .biu_pad_arbar           (ibiu0_pad_arbar        ),
   .biu_pad_arburst         (ibiu0_pad_arburst      ),
@@ -754,17 +898,17 @@ ct_top  x_ct_top_0 (
   .biu_pad_awvalid         (ibiu0_pad_awvalid      ),
   .biu_pad_back            (ibiu0_pad_back         ),
   .biu_pad_bready          (ibiu0_pad_bready       ),
-  .biu_pad_cddata          (ibiu0_pad_cddata       ),
-  .biu_pad_cderr           (ibiu0_pad_cderr        ),
-  .biu_pad_cdlast          (ibiu0_pad_cdlast       ),
-  .biu_pad_cdvalid         (ibiu0_pad_cdvalid      ),
-  .biu_pad_cnt_en          (ibiu0_pad_cnt_en       ),
-  .biu_pad_crresp          (ibiu0_pad_crresp       ),
-  .biu_pad_crvalid         (ibiu0_pad_crvalid      ),
-  .biu_pad_csr_sel         (ibiu0_pad_csr_sel      ),
-  .biu_pad_csr_wdata       (ibiu0_pad_csr_wdata    ),
-  .biu_pad_jdb_pm          (ibiu0_pad_jdb_pm       ),
-  .biu_pad_lpmd_b          (ibiu0_pad_lpmd_b       ),
+  .biu_pad_cddata          (        ),
+  .biu_pad_cderr           (        ),
+  .biu_pad_cdlast          (        ),
+  .biu_pad_cdvalid         (        ),
+  .biu_pad_cnt_en          (        ),
+  .biu_pad_crresp          (        ),
+  .biu_pad_crvalid         (        ),
+  .biu_pad_csr_sel         (        ),
+  .biu_pad_csr_wdata       (        ),
+  .biu_pad_jdb_pm          (        ),
+  .biu_pad_lpmd_b          (        ),
   .biu_pad_rack            (ibiu0_pad_rack         ),
   .biu_pad_rready          (ibiu0_pad_rready       ),
   .biu_pad_wdata           (ibiu0_pad_wdata        ),
@@ -774,22 +918,22 @@ ct_top  x_ct_top_0 (
   .biu_pad_wstrb           (ibiu0_pad_wstrb        ),
   .biu_pad_wvalid          (ibiu0_pad_wvalid       ),
   .cp0_pad_mstatus         (core0_pad_mstatus      ),
-  .ir_corex_wdata          (ir_corex_wdata         ),
-  .pad_biu_acaddr          (pad_ibiu0_acaddr       ),
-  .pad_biu_acprot          (pad_ibiu0_acprot       ),
-  .pad_biu_acsnoop         (pad_ibiu0_acsnoop      ),
-  .pad_biu_acvalid         (pad_ibiu0_acvalid      ),
+  .ir_corex_wdata          (64'b0   ),
+  .pad_biu_acaddr          (40'b0   ),
+  .pad_biu_acprot          (3'b0    ),
+  .pad_biu_acsnoop         (4'b0    ),
+  .pad_biu_acvalid         (1'b0    ),
   .pad_biu_arready         (pad_ibiu0_arready      ),
   .pad_biu_awready         (pad_ibiu0_awready      ),
   .pad_biu_bid             (pad_ibiu0_bid          ),
   .pad_biu_bresp           (pad_ibiu0_bresp        ),
   .pad_biu_bvalid          (pad_ibiu0_bvalid       ),
-  .pad_biu_cdready         (pad_ibiu0_cdready      ),
-  .pad_biu_crready         (pad_ibiu0_crready      ),
-  .pad_biu_csr_cmplt       (pad_ibiu0_csr_cmplt    ),
-  .pad_biu_csr_rdata       (pad_ibiu0_csr_rdata    ),
-  .pad_biu_dbgrq_b         (pad_ibiu0_dbgrq_b      ),
-  .pad_biu_hpcp_l2of_int   (pad_ibiu0_hpcp_l2of_int),
+  .pad_biu_cdready         (1'b1    ),
+  .pad_biu_crready         (1'b1    ),
+  .pad_biu_csr_cmplt       (1'b0    ),
+  .pad_biu_csr_rdata       (128'b0  ),
+  .pad_biu_dbgrq_b         (1'b1    ),
+  .pad_biu_hpcp_l2of_int   (4'b0    ),
   .pad_biu_me_int          (pad_ibiu0_me_int       ),
   .pad_biu_ms_int          (pad_ibiu0_ms_int       ),
   .pad_biu_mt_int          (pad_ibiu0_mt_int       ),
@@ -810,8 +954,8 @@ ct_top  x_ct_top_0 (
   .pad_core_rst_b          (core0_rst_b            ),
   .pad_core_rvba           (pad_core0_rvba         ),
   .pad_cpu_rst_b           (cpurst_b               ),
-  .pad_xx_apb_base         (sysio_xx_apb_base      ),
-  .pad_xx_time             (sysio_xx_time          ),
+  .pad_xx_apb_base         ({pad_cpu_apb_base[39:27], 27'b0} ),
+  .pad_xx_time             (pad_cpu_sys_cnt        ),
   .pad_yy_icg_scan_en      (pad_yy_icg_scan_en     ),
   .pad_yy_mbist_mode       (pad_yy_mbist_mode      ),
   .pad_yy_scan_mode        (pad_yy_scan_mode       ),
@@ -824,841 +968,22 @@ ct_top  x_ct_top_0 (
   .rtu_pad_retire1_pc      (core0_pad_retire1_pc   ),
   .rtu_pad_retire2         (core0_pad_retire2      ),
   .rtu_pad_retire2_pc      (core0_pad_retire2_pc   ),
-  .sm_update_dr            (sm_update_dr           ),
-  .sm_update_ir            (sm_update_ir           ),
-  .x_dbg_ack_pc            (core0_dbg_ack_pc       ),
-  .x_enter_dbg_req_i       (core0_enter_dbg_req_i  ),
-  .x_enter_dbg_req_o       (core0_enter_dbg_req_o  ),
-  .x_exit_dbg_req_i        (core0_exit_dbg_req_i   ),
-  .x_exit_dbg_req_o        (core0_exit_dbg_req_o   ),
-  .x_had_dbg_mask          (core0_had_dbg_mask     ),
-  .x_regs_serial_data      (core0_regs_serial_data )
+  .sm_update_dr            (1'b0    ),
+  .sm_update_ir            (1'b0    ),
+  .x_dbg_ack_pc            (        ),
+  .x_enter_dbg_req_i       (1'b0    ),
+  .x_enter_dbg_req_o       (        ),
+  .x_exit_dbg_req_i        (1'b0    ),
+  .x_exit_dbg_req_o        (        ),
+  .x_had_dbg_mask          (1'b0    ),
+  .x_regs_serial_data      (        )
 );
 
-// &Connect(.pad_cpu_rst_b      (cpurst_b)); @98
-// &Connect(.pad_core_rst_b     (core0_rst_b)); @99
-// &Connect(.pll_core_clk       (forever_core0_clk)); @100
-// &Connect(.pad_core_hartid    (pad_core0_hartid)); @101
-// &Connect(.pad_core_rvba      (pad_core0_rvba)); @102
-// &Connect(.pad_xx_time        (sysio_xx_time)); @103
-// &Connect(.pad_xx_apb_base    (sysio_xx_apb_base)); @104
-// &Connect(.pad_core_async_mode(pad_core0_async_mode)); @106
-// &Connect(.pad_core_sleep_in  (pad_core0_sleep_in)); @107
-// &Connect(.core_pad_sleep_out (core0_pad_sleep_out)); @108
-// &Connect(.mem_cfg_in         (pad_core0_mem_cfg_in)); @111
-
-// &ConnRule(s/ciu_pbiu/pad_ibiu1/); @119
-// &ConnRule(s/pbiu_ciu/ibiu1_pad/); @120
-// &ConnRule(s/idu_/core1_/); @121
-// &ConnRule(s/rtu_/core1_/); @122
-// &ConnRule(s/cp0_/core1_/); @123
-// &ConnRule(s/^ptim_/ptim1_/); @124
-// &ConnRule(s/^hpcp_/hpcp1_/); @125
-// &ConnRule(s/^x_/core1_/); @126
-// &Instance("ct_top_uvc1", "x_ct_top_1"); @127
-// &Connect(.ciu_pbiu_axid  (pad_ibiu1_ac_verf_bus)); @128
-// &Connect(.core1_cpuclk  (forever_core1_clk)); @129
-// &Connect(.pad_core1_rst_b  (core1_rst_b)); @130
-// &ConnRule(s/biu_/ibiu1_/); @135
-// &ConnRule(s/rtu_/core1_/); @136
-// &ConnRule(s/idu_/core1_/); @137
-// &ConnRule(s/cp0_/core1_/); @138
-// &ConnRule(s/^x_/core1_/); @139
-// &Instance("ct_top", "x_ct_top_1"); @140
-ct_top  x_ct_top_1 (
-  .biu_pad_acready         (ibiu1_pad_acready      ),
-  .biu_pad_araddr          (ibiu1_pad_araddr       ),
-  .biu_pad_arbar           (ibiu1_pad_arbar        ),
-  .biu_pad_arburst         (ibiu1_pad_arburst      ),
-  .biu_pad_arcache         (ibiu1_pad_arcache      ),
-  .biu_pad_ardomain        (ibiu1_pad_ardomain     ),
-  .biu_pad_arid            (ibiu1_pad_arid         ),
-  .biu_pad_arlen           (ibiu1_pad_arlen        ),
-  .biu_pad_arlock          (ibiu1_pad_arlock       ),
-  .biu_pad_arprot          (ibiu1_pad_arprot       ),
-  .biu_pad_arsize          (ibiu1_pad_arsize       ),
-  .biu_pad_arsnoop         (ibiu1_pad_arsnoop      ),
-  .biu_pad_aruser          (ibiu1_pad_aruser       ),
-  .biu_pad_arvalid         (ibiu1_pad_arvalid      ),
-  .biu_pad_awaddr          (ibiu1_pad_awaddr       ),
-  .biu_pad_awbar           (ibiu1_pad_awbar        ),
-  .biu_pad_awburst         (ibiu1_pad_awburst      ),
-  .biu_pad_awcache         (ibiu1_pad_awcache      ),
-  .biu_pad_awdomain        (ibiu1_pad_awdomain     ),
-  .biu_pad_awid            (ibiu1_pad_awid         ),
-  .biu_pad_awlen           (ibiu1_pad_awlen        ),
-  .biu_pad_awlock          (ibiu1_pad_awlock       ),
-  .biu_pad_awprot          (ibiu1_pad_awprot       ),
-  .biu_pad_awsize          (ibiu1_pad_awsize       ),
-  .biu_pad_awsnoop         (ibiu1_pad_awsnoop      ),
-  .biu_pad_awunique        (ibiu1_pad_awunique     ),
-  .biu_pad_awuser          (ibiu1_pad_awuser       ),
-  .biu_pad_awvalid         (ibiu1_pad_awvalid      ),
-  .biu_pad_back            (ibiu1_pad_back         ),
-  .biu_pad_bready          (ibiu1_pad_bready       ),
-  .biu_pad_cddata          (ibiu1_pad_cddata       ),
-  .biu_pad_cderr           (ibiu1_pad_cderr        ),
-  .biu_pad_cdlast          (ibiu1_pad_cdlast       ),
-  .biu_pad_cdvalid         (ibiu1_pad_cdvalid      ),
-  .biu_pad_cnt_en          (ibiu1_pad_cnt_en       ),
-  .biu_pad_crresp          (ibiu1_pad_crresp       ),
-  .biu_pad_crvalid         (ibiu1_pad_crvalid      ),
-  .biu_pad_csr_sel         (ibiu1_pad_csr_sel      ),
-  .biu_pad_csr_wdata       (ibiu1_pad_csr_wdata    ),
-  .biu_pad_jdb_pm          (ibiu1_pad_jdb_pm       ),
-  .biu_pad_lpmd_b          (ibiu1_pad_lpmd_b       ),
-  .biu_pad_rack            (ibiu1_pad_rack         ),
-  .biu_pad_rready          (ibiu1_pad_rready       ),
-  .biu_pad_wdata           (ibiu1_pad_wdata        ),
-  .biu_pad_werr            (ibiu1_pad_werr         ),
-  .biu_pad_wlast           (ibiu1_pad_wlast        ),
-  .biu_pad_wns             (ibiu1_pad_wns          ),
-  .biu_pad_wstrb           (ibiu1_pad_wstrb        ),
-  .biu_pad_wvalid          (ibiu1_pad_wvalid       ),
-  .cp0_pad_mstatus         (core1_pad_mstatus      ),
-  .ir_corex_wdata          (ir_corex_wdata         ),
-  .pad_biu_acaddr          (pad_ibiu1_acaddr       ),
-  .pad_biu_acprot          (pad_ibiu1_acprot       ),
-  .pad_biu_acsnoop         (pad_ibiu1_acsnoop      ),
-  .pad_biu_acvalid         (pad_ibiu1_acvalid      ),
-  .pad_biu_arready         (pad_ibiu1_arready      ),
-  .pad_biu_awready         (pad_ibiu1_awready      ),
-  .pad_biu_bid             (pad_ibiu1_bid          ),
-  .pad_biu_bresp           (pad_ibiu1_bresp        ),
-  .pad_biu_bvalid          (pad_ibiu1_bvalid       ),
-  .pad_biu_cdready         (pad_ibiu1_cdready      ),
-  .pad_biu_crready         (pad_ibiu1_crready      ),
-  .pad_biu_csr_cmplt       (pad_ibiu1_csr_cmplt    ),
-  .pad_biu_csr_rdata       (pad_ibiu1_csr_rdata    ),
-  .pad_biu_dbgrq_b         (pad_ibiu1_dbgrq_b      ),
-  .pad_biu_hpcp_l2of_int   (pad_ibiu1_hpcp_l2of_int),
-  .pad_biu_me_int          (pad_ibiu1_me_int       ),
-  .pad_biu_ms_int          (pad_ibiu1_ms_int       ),
-  .pad_biu_mt_int          (pad_ibiu1_mt_int       ),
-  .pad_biu_rdata           (pad_ibiu1_rdata        ),
-  .pad_biu_rid             (pad_ibiu1_rid          ),
-  .pad_biu_rlast           (pad_ibiu1_rlast        ),
-  .pad_biu_rresp           (pad_ibiu1_rresp        ),
-  .pad_biu_rvalid          (pad_ibiu1_rvalid       ),
-  .pad_biu_se_int          (pad_ibiu1_se_int       ),
-  .pad_biu_ss_int          (pad_ibiu1_ss_int       ),
-  .pad_biu_st_int          (pad_ibiu1_st_int       ),
-  .pad_biu_wns_awready     (pad_ibiu1_wns_awready  ),
-  .pad_biu_wns_wready      (pad_ibiu1_wns_wready   ),
-  .pad_biu_wready          (pad_ibiu1_wready       ),
-  .pad_biu_ws_awready      (pad_ibiu1_ws_awready   ),
-  .pad_biu_ws_wready       (pad_ibiu1_ws_wready    ),
-  .pad_core_hartid         (pad_core1_hartid       ),
-  .pad_core_rst_b          (core1_rst_b            ),
-  .pad_core_rvba           (pad_core1_rvba         ),
-  .pad_cpu_rst_b           (cpurst_b               ),
-  .pad_xx_apb_base         (sysio_xx_apb_base      ),
-  .pad_xx_time             (sysio_xx_time          ),
-  .pad_yy_icg_scan_en      (pad_yy_icg_scan_en     ),
-  .pad_yy_mbist_mode       (pad_yy_mbist_mode      ),
-  .pad_yy_scan_mode        (pad_yy_scan_mode       ),
-  .pad_yy_scan_rst_b       (pad_yy_scan_rst_b      ),
-  .pll_core_clk            (forever_core1_clk      ),
-  .rtu_cpu_no_retire       (core1_cpu_no_retire    ),
-  .rtu_pad_retire0         (core1_pad_retire0      ),
-  .rtu_pad_retire0_pc      (core1_pad_retire0_pc   ),
-  .rtu_pad_retire1         (core1_pad_retire1      ),
-  .rtu_pad_retire1_pc      (core1_pad_retire1_pc   ),
-  .rtu_pad_retire2         (core1_pad_retire2      ),
-  .rtu_pad_retire2_pc      (core1_pad_retire2_pc   ),
-  .sm_update_dr            (sm_update_dr           ),
-  .sm_update_ir            (sm_update_ir           ),
-  .x_dbg_ack_pc            (core1_dbg_ack_pc       ),
-  .x_enter_dbg_req_i       (core1_enter_dbg_req_i  ),
-  .x_enter_dbg_req_o       (core1_enter_dbg_req_o  ),
-  .x_exit_dbg_req_i        (core1_exit_dbg_req_i   ),
-  .x_exit_dbg_req_o        (core1_exit_dbg_req_o   ),
-  .x_had_dbg_mask          (core1_had_dbg_mask     ),
-  .x_regs_serial_data      (core1_regs_serial_data )
-);
-
-// &Connect(.pad_cpu_rst_b      (cpurst_b)); @141
-// &Connect(.pad_core_rst_b     (core1_rst_b)); @142
-// &Connect(.pll_core_clk       (forever_core1_clk)); @143
-// &Connect(.pad_core_hartid    (pad_core1_hartid)); @144
-// &Connect(.pad_core_rvba      (pad_core1_rvba)); @145
-// &Connect(.pad_xx_time        (sysio_xx_time)); @146
-// &Connect(.pad_xx_apb_base    (sysio_xx_apb_base)); @147
-// &Connect(.pad_core_async_mode(pad_core1_async_mode)); @149
-// &Connect(.pad_core_sleep_in  (pad_core1_sleep_in)); @150
-// &Connect(.core_pad_sleep_out (core1_pad_sleep_out)); @151
-// &Connect(.mem_cfg_in         (pad_core1_mem_cfg_in)); @154
-
-// &ConnRule(s/ciu_pbiu/pad_ibiu2/); @164
-// &ConnRule(s/pbiu_ciu/ibiu2_pad/); @165
-// &ConnRule(s/idu_/core2_/); @166
-// &ConnRule(s/rtu_/core2_/); @167
-// &ConnRule(s/cp0_/core2_/); @168
-// &ConnRule(s/^ptim_/ptim2_/); @169
-// &ConnRule(s/^hpcp_/hpcp2_/); @170
-// &ConnRule(s/^x_/core2_/); @171
-// &Instance("ct_top_uvc2", "x_ct_top_2"); @172
-// &Connect(.ciu_pbiu_axid  (pad_ibiu2_ac_verf_bus)); @173
-// &Connect(.core2_cpuclk  (forever_core2_clk)); @174
-// &Connect(.pad_core2_rst_b  (core2_rst_b)); @175
-// &ConnRule(s/biu_/ibiu2_/); @180
-// &ConnRule(s/rtu_/core2_/); @181
-// &ConnRule(s/idu_/core2_/); @182
-// &ConnRule(s/cp0_/core2_/); @183
-// &ConnRule(s/^x_/core2_/); @184
-// &Instance("ct_top", "x_ct_top_2"); @185
-// &Connect(.pad_cpu_rst_b      (cpurst_b)); @186
-// &Connect(.pad_core_rst_b     (core2_rst_b)); @187
-// &Connect(.pll_core_clk       (forever_core2_clk)); @188
-// &Connect(.pad_core_hartid    (pad_core2_hartid)); @189
-// &Connect(.pad_core_rvba      (pad_core2_rvba)); @190
-// &Connect(.pad_xx_time        (sysio_xx_time)); @191
-// &Connect(.pad_xx_apb_base    (sysio_xx_apb_base)); @192
-// &Connect(.pad_core_async_mode(pad_core2_async_mode)); @194
-// &Connect(.pad_core_sleep_in  (pad_core2_sleep_in)); @195
-// &Connect(.core_pad_sleep_out (core2_pad_sleep_out)); @196
-// &Connect(.mem_cfg_in         (pad_core2_mem_cfg_in)); @199
-
-// &ConnRule(s/ciu_pbiu/pad_ibiu3/); @209
-// &ConnRule(s/pbiu_ciu/ibiu3_pad/); @210
-// &ConnRule(s/idu_/core3_/); @211
-// &ConnRule(s/rtu_/core3_/); @212
-// &ConnRule(s/cp0_/core3_/); @213
-// &ConnRule(s/^ptim_/ptim3_/); @214
-// &ConnRule(s/^hpcp_/hpcp3_/); @215
-// &ConnRule(s/^x_/core3_/); @216
-// &Instance("ct_top_uvc3", "x_ct_top_3"); @217
-// &Connect(.ciu_pbiu_axid  (pad_ibiu3_ac_verf_bus)); @218
-// &Connect(.core3_cpuclk  (forever_core3_clk)); @219
-// &Connect(.pad_core3_rst_b  (core3_rst_b)); @220
-// &ConnRule(s/biu_/ibiu3_/); @224
-// &ConnRule(s/rtu_/core3_/); @225
-// &ConnRule(s/idu_/core3_/); @226
-// &ConnRule(s/cp0_/core3_/); @227
-// &ConnRule(s/^x_/core3_/); @228
-// &Instance("ct_top", "x_ct_top_3"); @229
-// &Connect(.pad_cpu_rst_b      (cpurst_b)); @230
-// &Connect(.pad_core_rst_b     (core3_rst_b)); @231
-// &Connect(.pll_core_clk       (forever_core3_clk)); @232
-// &Connect(.pad_core_hartid    (pad_core3_hartid)); @233
-// &Connect(.pad_core_rvba      (pad_core3_rvba)); @234
-// &Connect(.pad_xx_time        (sysio_xx_time)); @235
-// &Connect(.pad_xx_apb_base    (sysio_xx_apb_base)); @236
-// &Connect(.pad_core_async_mode(pad_core3_async_mode)); @238
-// &Connect(.pad_core_sleep_in  (pad_core3_sleep_in)); @239
-// &Connect(.core_pad_sleep_out (core3_pad_sleep_out)); @240
-// &Connect(.mem_cfg_in         (pad_core3_mem_cfg_in)); @243
-
-//==========================================================
-//  Instance ct_ciu_top sub module 
-//==========================================================
-// &ConnRule(s/ibiu/ibiu0/); @253
-// &Instance("ct_ciu_bus_io", "x_ct_ciu_bus_io_0"); @254
-// &Connect(.forever_cpuclk   (forever_cpuclk)); @255
-// &Connect(.cpurst_b         (cpurst_b      )); @256
-// &Connect(.core_rst_b       (core0_fifo_rst_b   )); @257
-// &Connect(.pad_core_async_mode(pad_core0_async_mode)); @258
-// &ConnRule(s/ibiu/ibiu1/); @297
-// &Instance("ct_ciu_bus_io", "x_ct_ciu_bus_io_1"); @298
-// &Connect(.forever_cpuclk   (forever_cpuclk)); @299
-// &Connect(.cpurst_b         (cpurst_b      )); @300
-// &Connect(.core_rst_b       (core1_fifo_rst_b   )); @301
-// &Connect(.pad_core_async_mode(pad_core1_async_mode)); @302
-// &ConnRule(s/ibiu/ibiu2/); @342
-// &Instance("ct_ciu_bus_io", "x_ct_ciu_bus_io_2"); @343
-// &Connect(.forever_cpuclk   (forever_cpuclk)); @344
-// &Connect(.cpurst_b         (cpurst_b      )); @345
-// &Connect(.core_rst_b       (core2_fifo_rst_b   )); @346
-// &Connect(.pad_core_async_mode(pad_core2_async_mode)); @347
-// &ConnRule(s/ibiu/ibiu3/); @387
-// &Instance("ct_ciu_bus_io", "x_ct_ciu_bus_io_3"); @388
-// &Connect(.forever_cpuclk   (forever_cpuclk)); @389
-// &Connect(.cpurst_b         (cpurst_b      )); @390
-// &Connect(.core_rst_b       (core3_fifo_rst_b   )); @391
-// &Connect(.pad_core_async_mode(pad_core3_async_mode)); @392
-
-//==========================================================
-//  Instance ct_ciu_top sub module 
-//==========================================================
-// &Instance("ct_ciu_top"); @434
-ct_ciu_top  x_ct_ciu_top (
-  .apb_clk_en                     (apb_clk_en                    ),
-  .apbif_had_pctrace_inv          (apbif_had_pctrace_inv         ),
-  .biu_pad_araddr                 (biu_pad_araddr                ),
-  .biu_pad_arburst                (biu_pad_arburst               ),
-  .biu_pad_arcache                (biu_pad_arcache               ),
-  .biu_pad_arid                   (biu_pad_arid                  ),
-  .biu_pad_arlen                  (biu_pad_arlen                 ),
-  .biu_pad_arlock                 (biu_pad_arlock                ),
-  .biu_pad_arprot                 (biu_pad_arprot                ),
-  .biu_pad_arsize                 (biu_pad_arsize                ),
-  .biu_pad_arvalid                (biu_pad_arvalid               ),
-  .biu_pad_awaddr                 (biu_pad_awaddr                ),
-  .biu_pad_awburst                (biu_pad_awburst               ),
-  .biu_pad_awcache                (biu_pad_awcache               ),
-  .biu_pad_awid                   (biu_pad_awid                  ),
-  .biu_pad_awlen                  (biu_pad_awlen                 ),
-  .biu_pad_awlock                 (biu_pad_awlock                ),
-  .biu_pad_awprot                 (biu_pad_awprot                ),
-  .biu_pad_awsize                 (biu_pad_awsize                ),
-  .biu_pad_awvalid                (biu_pad_awvalid               ),
-  .biu_pad_bready                 (biu_pad_bready                ),
-  .biu_pad_cactive                (biu_pad_cactive               ),
-  .biu_pad_csysack                (biu_pad_csysack               ),
-  .biu_pad_rready                 (biu_pad_rready                ),
-  .biu_pad_wdata                  (biu_pad_wdata                 ),
-  .biu_pad_wlast                  (biu_pad_wlast                 ),
-  .biu_pad_wstrb                  (biu_pad_wstrb                 ),
-  .biu_pad_wvalid                 (biu_pad_wvalid                ),
-  .ciu_clint_icg_en               (ciu_clint_icg_en              ),
-  .ciu_had_dbg_info               (ciu_had_dbg_info              ),
-  .ciu_l2c_addr_bank_0            (ciu_l2c_addr_bank_0           ),
-  .ciu_l2c_addr_bank_1            (ciu_l2c_addr_bank_1           ),
-  .ciu_l2c_addr_vld_bank_0        (ciu_l2c_addr_vld_bank_0       ),
-  .ciu_l2c_addr_vld_bank_1        (ciu_l2c_addr_vld_bank_1       ),
-  .ciu_l2c_clr_cp_bank_0          (ciu_l2c_clr_cp_bank_0         ),
-  .ciu_l2c_clr_cp_bank_1          (ciu_l2c_clr_cp_bank_1         ),
-  .ciu_l2c_ctcq_req_bank_0        (ciu_l2c_ctcq_req_bank_0       ),
-  .ciu_l2c_ctcq_req_bank_1        (ciu_l2c_ctcq_req_bank_1       ),
-  .ciu_l2c_data_latency           (ciu_l2c_data_latency          ),
-  .ciu_l2c_data_setup             (ciu_l2c_data_setup            ),
-  .ciu_l2c_data_vld_bank_0        (ciu_l2c_data_vld_bank_0       ),
-  .ciu_l2c_data_vld_bank_1        (ciu_l2c_data_vld_bank_1       ),
-  .ciu_l2c_dca_addr_bank_0        (ciu_l2c_dca_addr_bank_0       ),
-  .ciu_l2c_dca_addr_bank_1        (ciu_l2c_dca_addr_bank_1       ),
-  .ciu_l2c_dca_req_bank_0         (ciu_l2c_dca_req_bank_0        ),
-  .ciu_l2c_dca_req_bank_1         (ciu_l2c_dca_req_bank_1        ),
-  .ciu_l2c_hpcp_bus_bank_0        (ciu_l2c_hpcp_bus_bank_0       ),
-  .ciu_l2c_hpcp_bus_bank_1        (ciu_l2c_hpcp_bus_bank_1       ),
-  .ciu_l2c_icc_mid_bank_0         (ciu_l2c_icc_mid_bank_0        ),
-  .ciu_l2c_icc_mid_bank_1         (ciu_l2c_icc_mid_bank_1        ),
-  .ciu_l2c_icc_type_bank_0        (ciu_l2c_icc_type_bank_0       ),
-  .ciu_l2c_icc_type_bank_1        (ciu_l2c_icc_type_bank_1       ),
-  .ciu_l2c_iprf                   (ciu_l2c_iprf                  ),
-  .ciu_l2c_mid_bank_0             (ciu_l2c_mid_bank_0            ),
-  .ciu_l2c_mid_bank_1             (ciu_l2c_mid_bank_1            ),
-  .ciu_l2c_prf_ready              (ciu_l2c_prf_ready             ),
-  .ciu_l2c_rdl_ready_bank_0       (ciu_l2c_rdl_ready_bank_0      ),
-  .ciu_l2c_rdl_ready_bank_1       (ciu_l2c_rdl_ready_bank_1      ),
-  .ciu_l2c_rst_req                (ciu_l2c_rst_req               ),
-  .ciu_l2c_set_cp_bank_0          (ciu_l2c_set_cp_bank_0         ),
-  .ciu_l2c_set_cp_bank_1          (ciu_l2c_set_cp_bank_1         ),
-  .ciu_l2c_sid_bank_0             (ciu_l2c_sid_bank_0            ),
-  .ciu_l2c_sid_bank_1             (ciu_l2c_sid_bank_1            ),
-  .ciu_l2c_snpl2_ready_bank_0     (ciu_l2c_snpl2_ready_bank_0    ),
-  .ciu_l2c_snpl2_ready_bank_1     (ciu_l2c_snpl2_ready_bank_1    ),
-  .ciu_l2c_src_bank_0             (ciu_l2c_src_bank_0            ),
-  .ciu_l2c_src_bank_1             (ciu_l2c_src_bank_1            ),
-  .ciu_l2c_tag_latency            (ciu_l2c_tag_latency           ),
-  .ciu_l2c_tag_setup              (ciu_l2c_tag_setup             ),
-  .ciu_l2c_tprf                   (ciu_l2c_tprf                  ),
-  .ciu_l2c_type_bank_0            (ciu_l2c_type_bank_0           ),
-  .ciu_l2c_type_bank_1            (ciu_l2c_type_bank_1           ),
-  .ciu_l2c_wdata_bank_0           (ciu_l2c_wdata_bank_0          ),
-  .ciu_l2c_wdata_bank_1           (ciu_l2c_wdata_bank_1          ),
-  .ciu_plic_icg_en                (ciu_plic_icg_en               ),
-  .ciu_sysio_icg_en               (ciu_sysio_icg_en              ),
-  .ciu_top_clk                    (ciu_top_clk                   ),
-  .ciu_xx_no_op                   (ciu_xx_no_op                  ),
-  .clk_en                         (axim_clk_en_f                 ),
-  .core0_fifo_rst_b               (core0_fifo_rst_b              ),
-  .core1_fifo_rst_b               (core1_fifo_rst_b              ),
-  .cpurst_b                       (cpurst_b                      ),
-  .forever_cpuclk                 (forever_cpuclk                ),
-  .ibiu0_pad_acready              (ibiu0_pad_acready             ),
-  .ibiu0_pad_araddr               (ibiu0_pad_araddr              ),
-  .ibiu0_pad_arbar                (ibiu0_pad_arbar               ),
-  .ibiu0_pad_arburst              (ibiu0_pad_arburst             ),
-  .ibiu0_pad_arcache              (ibiu0_pad_arcache             ),
-  .ibiu0_pad_ardomain             (ibiu0_pad_ardomain            ),
-  .ibiu0_pad_arid                 (ibiu0_pad_arid                ),
-  .ibiu0_pad_arlen                (ibiu0_pad_arlen               ),
-  .ibiu0_pad_arlock               (ibiu0_pad_arlock              ),
-  .ibiu0_pad_arprot               (ibiu0_pad_arprot              ),
-  .ibiu0_pad_arsize               (ibiu0_pad_arsize              ),
-  .ibiu0_pad_arsnoop              (ibiu0_pad_arsnoop             ),
-  .ibiu0_pad_aruser               (ibiu0_pad_aruser              ),
-  .ibiu0_pad_arvalid              (ibiu0_pad_arvalid             ),
-  .ibiu0_pad_awaddr               (ibiu0_pad_awaddr              ),
-  .ibiu0_pad_awbar                (ibiu0_pad_awbar               ),
-  .ibiu0_pad_awburst              (ibiu0_pad_awburst             ),
-  .ibiu0_pad_awcache              (ibiu0_pad_awcache             ),
-  .ibiu0_pad_awdomain             (ibiu0_pad_awdomain            ),
-  .ibiu0_pad_awid                 (ibiu0_pad_awid                ),
-  .ibiu0_pad_awlen                (ibiu0_pad_awlen               ),
-  .ibiu0_pad_awlock               (ibiu0_pad_awlock              ),
-  .ibiu0_pad_awprot               (ibiu0_pad_awprot              ),
-  .ibiu0_pad_awsize               (ibiu0_pad_awsize              ),
-  .ibiu0_pad_awsnoop              (ibiu0_pad_awsnoop             ),
-  .ibiu0_pad_awunique             (ibiu0_pad_awunique            ),
-  .ibiu0_pad_awuser               (ibiu0_pad_awuser              ),
-  .ibiu0_pad_awvalid              (ibiu0_pad_awvalid             ),
-  .ibiu0_pad_back                 (ibiu0_pad_back                ),
-  .ibiu0_pad_bready               (ibiu0_pad_bready              ),
-  .ibiu0_pad_cddata               (ibiu0_pad_cddata              ),
-  .ibiu0_pad_cderr                (ibiu0_pad_cderr               ),
-  .ibiu0_pad_cdlast               (ibiu0_pad_cdlast              ),
-  .ibiu0_pad_cdvalid              (ibiu0_pad_cdvalid             ),
-  .ibiu0_pad_cnt_en               (ibiu0_pad_cnt_en              ),
-  .ibiu0_pad_crresp               (ibiu0_pad_crresp              ),
-  .ibiu0_pad_crvalid              (ibiu0_pad_crvalid             ),
-  .ibiu0_pad_csr_sel              (ibiu0_pad_csr_sel             ),
-  .ibiu0_pad_csr_wdata            (ibiu0_pad_csr_wdata           ),
-  .ibiu0_pad_jdb_pm               (ibiu0_pad_jdb_pm              ),
-  .ibiu0_pad_lpmd_b               (ibiu0_pad_lpmd_b              ),
-  .ibiu0_pad_rack                 (ibiu0_pad_rack                ),
-  .ibiu0_pad_rready               (ibiu0_pad_rready              ),
-  .ibiu0_pad_wdata                (ibiu0_pad_wdata               ),
-  .ibiu0_pad_werr                 (ibiu0_pad_werr                ),
-  .ibiu0_pad_wlast                (ibiu0_pad_wlast               ),
-  .ibiu0_pad_wns                  (ibiu0_pad_wns                 ),
-  .ibiu0_pad_wstrb                (ibiu0_pad_wstrb               ),
-  .ibiu0_pad_wvalid               (ibiu0_pad_wvalid              ),
-  .ibiu1_pad_acready              (ibiu1_pad_acready             ),
-  .ibiu1_pad_araddr               (ibiu1_pad_araddr              ),
-  .ibiu1_pad_arbar                (ibiu1_pad_arbar               ),
-  .ibiu1_pad_arburst              (ibiu1_pad_arburst             ),
-  .ibiu1_pad_arcache              (ibiu1_pad_arcache             ),
-  .ibiu1_pad_ardomain             (ibiu1_pad_ardomain            ),
-  .ibiu1_pad_arid                 (ibiu1_pad_arid                ),
-  .ibiu1_pad_arlen                (ibiu1_pad_arlen               ),
-  .ibiu1_pad_arlock               (ibiu1_pad_arlock              ),
-  .ibiu1_pad_arprot               (ibiu1_pad_arprot              ),
-  .ibiu1_pad_arsize               (ibiu1_pad_arsize              ),
-  .ibiu1_pad_arsnoop              (ibiu1_pad_arsnoop             ),
-  .ibiu1_pad_aruser               (ibiu1_pad_aruser              ),
-  .ibiu1_pad_arvalid              (ibiu1_pad_arvalid             ),
-  .ibiu1_pad_awaddr               (ibiu1_pad_awaddr              ),
-  .ibiu1_pad_awbar                (ibiu1_pad_awbar               ),
-  .ibiu1_pad_awburst              (ibiu1_pad_awburst             ),
-  .ibiu1_pad_awcache              (ibiu1_pad_awcache             ),
-  .ibiu1_pad_awdomain             (ibiu1_pad_awdomain            ),
-  .ibiu1_pad_awid                 (ibiu1_pad_awid                ),
-  .ibiu1_pad_awlen                (ibiu1_pad_awlen               ),
-  .ibiu1_pad_awlock               (ibiu1_pad_awlock              ),
-  .ibiu1_pad_awprot               (ibiu1_pad_awprot              ),
-  .ibiu1_pad_awsize               (ibiu1_pad_awsize              ),
-  .ibiu1_pad_awsnoop              (ibiu1_pad_awsnoop             ),
-  .ibiu1_pad_awunique             (ibiu1_pad_awunique            ),
-  .ibiu1_pad_awuser               (ibiu1_pad_awuser              ),
-  .ibiu1_pad_awvalid              (ibiu1_pad_awvalid             ),
-  .ibiu1_pad_back                 (ibiu1_pad_back                ),
-  .ibiu1_pad_bready               (ibiu1_pad_bready              ),
-  .ibiu1_pad_cddata               (ibiu1_pad_cddata              ),
-  .ibiu1_pad_cderr                (ibiu1_pad_cderr               ),
-  .ibiu1_pad_cdlast               (ibiu1_pad_cdlast              ),
-  .ibiu1_pad_cdvalid              (ibiu1_pad_cdvalid             ),
-  .ibiu1_pad_cnt_en               (ibiu1_pad_cnt_en              ),
-  .ibiu1_pad_crresp               (ibiu1_pad_crresp              ),
-  .ibiu1_pad_crvalid              (ibiu1_pad_crvalid             ),
-  .ibiu1_pad_csr_sel              (ibiu1_pad_csr_sel             ),
-  .ibiu1_pad_csr_wdata            (ibiu1_pad_csr_wdata           ),
-  .ibiu1_pad_jdb_pm               (ibiu1_pad_jdb_pm              ),
-  .ibiu1_pad_lpmd_b               (ibiu1_pad_lpmd_b              ),
-  .ibiu1_pad_rack                 (ibiu1_pad_rack                ),
-  .ibiu1_pad_rready               (ibiu1_pad_rready              ),
-  .ibiu1_pad_wdata                (ibiu1_pad_wdata               ),
-  .ibiu1_pad_werr                 (ibiu1_pad_werr                ),
-  .ibiu1_pad_wlast                (ibiu1_pad_wlast               ),
-  .ibiu1_pad_wns                  (ibiu1_pad_wns                 ),
-  .ibiu1_pad_wstrb                (ibiu1_pad_wstrb               ),
-  .ibiu1_pad_wvalid               (ibiu1_pad_wvalid              ),
-  .l2c_ciu_addr_ready_bank_0      (l2c_ciu_addr_ready_bank_0     ),
-  .l2c_ciu_addr_ready_bank_1      (l2c_ciu_addr_ready_bank_1     ),
-  .l2c_ciu_cmplt_bank_0           (l2c_ciu_cmplt_bank_0          ),
-  .l2c_ciu_cmplt_bank_1           (l2c_ciu_cmplt_bank_1          ),
-  .l2c_ciu_cp_bank_0              (l2c_ciu_cp_bank_0             ),
-  .l2c_ciu_cp_bank_1              (l2c_ciu_cp_bank_1             ),
-  .l2c_ciu_ctcq_cmplt_bank_0      (l2c_ciu_ctcq_cmplt_bank_0     ),
-  .l2c_ciu_ctcq_cmplt_bank_1      (l2c_ciu_ctcq_cmplt_bank_1     ),
-  .l2c_ciu_ctcq_ready_bank_0      (l2c_ciu_ctcq_ready_bank_0     ),
-  .l2c_ciu_ctcq_ready_bank_1      (l2c_ciu_ctcq_ready_bank_1     ),
-  .l2c_ciu_data_bank_0            (l2c_ciu_data_bank_0           ),
-  .l2c_ciu_data_bank_1            (l2c_ciu_data_bank_1           ),
-  .l2c_ciu_data_ready_bank_0      (l2c_ciu_data_ready_bank_0     ),
-  .l2c_ciu_data_ready_bank_1      (l2c_ciu_data_ready_bank_1     ),
-  .l2c_ciu_data_ready_gate_bank_0 (l2c_ciu_data_ready_gate_bank_0),
-  .l2c_ciu_data_ready_gate_bank_1 (l2c_ciu_data_ready_gate_bank_1),
-  .l2c_ciu_dbg_info               (l2c_ciu_dbg_info              ),
-  .l2c_ciu_dca_cmplt_bank_0       (l2c_ciu_dca_cmplt_bank_0      ),
-  .l2c_ciu_dca_cmplt_bank_1       (l2c_ciu_dca_cmplt_bank_1      ),
-  .l2c_ciu_dca_data_bank_0        (l2c_ciu_dca_data_bank_0       ),
-  .l2c_ciu_dca_data_bank_1        (l2c_ciu_dca_data_bank_1       ),
-  .l2c_ciu_dca_ready_bank_0       (l2c_ciu_dca_ready_bank_0      ),
-  .l2c_ciu_dca_ready_bank_1       (l2c_ciu_dca_ready_bank_1      ),
-  .l2c_ciu_hpcp_acc_inc_bank_0    (l2c_ciu_hpcp_acc_inc_bank_0   ),
-  .l2c_ciu_hpcp_acc_inc_bank_1    (l2c_ciu_hpcp_acc_inc_bank_1   ),
-  .l2c_ciu_hpcp_mid_bank_0        (l2c_ciu_hpcp_mid_bank_0       ),
-  .l2c_ciu_hpcp_mid_bank_1        (l2c_ciu_hpcp_mid_bank_1       ),
-  .l2c_ciu_hpcp_miss_inc_bank_0   (l2c_ciu_hpcp_miss_inc_bank_0  ),
-  .l2c_ciu_hpcp_miss_inc_bank_1   (l2c_ciu_hpcp_miss_inc_bank_1  ),
-  .l2c_ciu_prf_addr               (l2c_ciu_prf_addr              ),
-  .l2c_ciu_prf_prot               (l2c_ciu_prf_prot              ),
-  .l2c_ciu_prf_vld                (l2c_ciu_prf_vld               ),
-  .l2c_ciu_rdl_addr_bank_0        (l2c_ciu_rdl_addr_bank_0       ),
-  .l2c_ciu_rdl_addr_bank_1        (l2c_ciu_rdl_addr_bank_1       ),
-  .l2c_ciu_rdl_dvld_bank_0        (l2c_ciu_rdl_dvld_bank_0       ),
-  .l2c_ciu_rdl_dvld_bank_1        (l2c_ciu_rdl_dvld_bank_1       ),
-  .l2c_ciu_rdl_mid_bank_0         (l2c_ciu_rdl_mid_bank_0        ),
-  .l2c_ciu_rdl_mid_bank_1         (l2c_ciu_rdl_mid_bank_1        ),
-  .l2c_ciu_rdl_prot_bank_0        (l2c_ciu_rdl_prot_bank_0       ),
-  .l2c_ciu_rdl_prot_bank_1        (l2c_ciu_rdl_prot_bank_1       ),
-  .l2c_ciu_rdl_rvld_bank_0        (l2c_ciu_rdl_rvld_bank_0       ),
-  .l2c_ciu_rdl_rvld_bank_1        (l2c_ciu_rdl_rvld_bank_1       ),
-  .l2c_ciu_resp_bank_0            (l2c_ciu_resp_bank_0           ),
-  .l2c_ciu_resp_bank_1            (l2c_ciu_resp_bank_1           ),
-  .l2c_ciu_sid_bank_0             (l2c_ciu_sid_bank_0            ),
-  .l2c_ciu_sid_bank_1             (l2c_ciu_sid_bank_1            ),
-  .l2c_ciu_snpl2_addr_bank_0      (l2c_ciu_snpl2_addr_bank_0     ),
-  .l2c_ciu_snpl2_addr_bank_1      (l2c_ciu_snpl2_addr_bank_1     ),
-  .l2c_ciu_snpl2_ini_sid_bank_0   (l2c_ciu_snpl2_ini_sid_bank_0  ),
-  .l2c_ciu_snpl2_ini_sid_bank_1   (l2c_ciu_snpl2_ini_sid_bank_1  ),
-  .l2c_ciu_snpl2_vld_bank_0       (l2c_ciu_snpl2_vld_bank_0      ),
-  .l2c_ciu_snpl2_vld_bank_1       (l2c_ciu_snpl2_vld_bank_1      ),
-  .l2c_had_dbg_info               (l2c_had_dbg_info              ),
-  .l2c_icg_en                     (l2c_icg_en                    ),
-  .l2c_plic_ecc_int_vld           (l2c_plic_ecc_int_vld          ),
-  .l2c_xx_no_op                   (l2c_xx_no_op                  ),
-  .pad_biu_arready                (pad_biu_arready               ),
-  .pad_biu_awready                (pad_biu_awready               ),
-  .pad_biu_bid                    (pad_biu_bid                   ),
-  .pad_biu_bresp                  (pad_biu_bresp                 ),
-  .pad_biu_bvalid                 (pad_biu_bvalid                ),
-  .pad_biu_csysreq                (pad_biu_csysreq               ),
-  .pad_biu_rdata                  (pad_biu_rdata                 ),
-  .pad_biu_rid                    (pad_biu_rid                   ),
-  .pad_biu_rlast                  (pad_biu_rlast                 ),
-  .pad_biu_rresp                  (pad_biu_rresp                 ),
-  .pad_biu_rvalid                 (pad_biu_rvalid                ),
-  .pad_biu_wready                 (pad_biu_wready                ),
-  .pad_ibiu0_acaddr               (pad_ibiu0_acaddr              ),
-  .pad_ibiu0_acprot               (pad_ibiu0_acprot              ),
-  .pad_ibiu0_acsnoop              (pad_ibiu0_acsnoop             ),
-  .pad_ibiu0_acvalid              (pad_ibiu0_acvalid             ),
-  .pad_ibiu0_arready              (pad_ibiu0_arready             ),
-  .pad_ibiu0_awready              (pad_ibiu0_awready             ),
-  .pad_ibiu0_bid                  (pad_ibiu0_bid                 ),
-  .pad_ibiu0_bresp                (pad_ibiu0_bresp               ),
-  .pad_ibiu0_bvalid               (pad_ibiu0_bvalid              ),
-  .pad_ibiu0_cdready              (pad_ibiu0_cdready             ),
-  .pad_ibiu0_crready              (pad_ibiu0_crready             ),
-  .pad_ibiu0_csr_cmplt            (pad_ibiu0_csr_cmplt           ),
-  .pad_ibiu0_csr_rdata            (pad_ibiu0_csr_rdata           ),
-  .pad_ibiu0_dbgrq_b              (pad_ibiu0_dbgrq_b             ),
-  .pad_ibiu0_hpcp_l2of_int        (pad_ibiu0_hpcp_l2of_int       ),
-  .pad_ibiu0_me_int               (pad_ibiu0_me_int              ),
-  .pad_ibiu0_ms_int               (pad_ibiu0_ms_int              ),
-  .pad_ibiu0_mt_int               (pad_ibiu0_mt_int              ),
-  .pad_ibiu0_rdata                (pad_ibiu0_rdata               ),
-  .pad_ibiu0_rid                  (pad_ibiu0_rid                 ),
-  .pad_ibiu0_rlast                (pad_ibiu0_rlast               ),
-  .pad_ibiu0_rresp                (pad_ibiu0_rresp               ),
-  .pad_ibiu0_rvalid               (pad_ibiu0_rvalid              ),
-  .pad_ibiu0_se_int               (pad_ibiu0_se_int              ),
-  .pad_ibiu0_ss_int               (pad_ibiu0_ss_int              ),
-  .pad_ibiu0_st_int               (pad_ibiu0_st_int              ),
-  .pad_ibiu0_wns_awready          (pad_ibiu0_wns_awready         ),
-  .pad_ibiu0_wns_wready           (pad_ibiu0_wns_wready          ),
-  .pad_ibiu0_wready               (pad_ibiu0_wready              ),
-  .pad_ibiu0_ws_awready           (pad_ibiu0_ws_awready          ),
-  .pad_ibiu0_ws_wready            (pad_ibiu0_ws_wready           ),
-  .pad_ibiu1_acaddr               (pad_ibiu1_acaddr              ),
-  .pad_ibiu1_acprot               (pad_ibiu1_acprot              ),
-  .pad_ibiu1_acsnoop              (pad_ibiu1_acsnoop             ),
-  .pad_ibiu1_acvalid              (pad_ibiu1_acvalid             ),
-  .pad_ibiu1_arready              (pad_ibiu1_arready             ),
-  .pad_ibiu1_awready              (pad_ibiu1_awready             ),
-  .pad_ibiu1_bid                  (pad_ibiu1_bid                 ),
-  .pad_ibiu1_bresp                (pad_ibiu1_bresp               ),
-  .pad_ibiu1_bvalid               (pad_ibiu1_bvalid              ),
-  .pad_ibiu1_cdready              (pad_ibiu1_cdready             ),
-  .pad_ibiu1_crready              (pad_ibiu1_crready             ),
-  .pad_ibiu1_csr_cmplt            (pad_ibiu1_csr_cmplt           ),
-  .pad_ibiu1_csr_rdata            (pad_ibiu1_csr_rdata           ),
-  .pad_ibiu1_dbgrq_b              (pad_ibiu1_dbgrq_b             ),
-  .pad_ibiu1_hpcp_l2of_int        (pad_ibiu1_hpcp_l2of_int       ),
-  .pad_ibiu1_me_int               (pad_ibiu1_me_int              ),
-  .pad_ibiu1_ms_int               (pad_ibiu1_ms_int              ),
-  .pad_ibiu1_mt_int               (pad_ibiu1_mt_int              ),
-  .pad_ibiu1_rdata                (pad_ibiu1_rdata               ),
-  .pad_ibiu1_rid                  (pad_ibiu1_rid                 ),
-  .pad_ibiu1_rlast                (pad_ibiu1_rlast               ),
-  .pad_ibiu1_rresp                (pad_ibiu1_rresp               ),
-  .pad_ibiu1_rvalid               (pad_ibiu1_rvalid              ),
-  .pad_ibiu1_se_int               (pad_ibiu1_se_int              ),
-  .pad_ibiu1_ss_int               (pad_ibiu1_ss_int              ),
-  .pad_ibiu1_st_int               (pad_ibiu1_st_int              ),
-  .pad_ibiu1_wns_awready          (pad_ibiu1_wns_awready         ),
-  .pad_ibiu1_wns_wready           (pad_ibiu1_wns_wready          ),
-  .pad_ibiu1_wready               (pad_ibiu1_wready              ),
-  .pad_ibiu1_ws_awready           (pad_ibiu1_ws_awready          ),
-  .pad_ibiu1_ws_wready            (pad_ibiu1_ws_wready           ),
-  .pad_yy_icg_scan_en             (pad_yy_icg_scan_en            ),
-  .paddr                          (paddr                         ),
-  .penable                        (penable                       ),
-  .perr_clint                     (perr_clint                    ),
-  .perr_had                       (perr_had                      ),
-  .perr_plic                      (perr_plic                     ),
-  .perr_rmr                       (perr_rmr                      ),
-  .piu0_sysio_jdb_pm              (piu0_sysio_jdb_pm             ),
-  .piu0_sysio_lpmd_b              (piu0_sysio_lpmd_b             ),
-  .piu1_sysio_jdb_pm              (piu1_sysio_jdb_pm             ),
-  .piu1_sysio_lpmd_b              (piu1_sysio_lpmd_b             ),
-  .pprot                          (pprot                         ),
-  .prdata_clint                   (prdata_clint                  ),
-  .prdata_had                     (prdata_had                    ),
-  .prdata_plic                    (prdata_plic                   ),
-  .prdata_rmr                     (prdata_rmr                    ),
-  .pready_clint                   (pready_clint                  ),
-  .pready_had                     (pready_had                    ),
-  .pready_plic                    (pready_plic                   ),
-  .pready_rmr                     (pready_rmr                    ),
-  .psel_clint                     (psel_clint                    ),
-  .psel_had                       (psel_had                      ),
-  .psel_plic                      (psel_plic                     ),
-  .psel_rmr                       (psel_rmr                      ),
-  .pwdata                         (pwdata                        ),
-  .pwrite                         (pwrite                        ),
-  .sysio_ciu_apb_base             (sysio_ciu_apb_base            ),
-  .sysio_l2c_flush_req            (sysio_l2c_flush_req           ),
-  .sysio_piu0_dbgrq_b             (sysio_piu0_dbgrq_b            ),
-  .sysio_piu0_me_int              (sysio_piu0_me_int             ),
-  .sysio_piu0_ms_int              (sysio_piu0_ms_int             ),
-  .sysio_piu0_mt_int              (sysio_piu0_mt_int             ),
-  .sysio_piu0_se_int              (sysio_piu0_se_int             ),
-  .sysio_piu0_ss_int              (sysio_piu0_ss_int             ),
-  .sysio_piu0_st_int              (sysio_piu0_st_int             ),
-  .sysio_piu1_dbgrq_b             (sysio_piu1_dbgrq_b            ),
-  .sysio_piu1_me_int              (sysio_piu1_me_int             ),
-  .sysio_piu1_ms_int              (sysio_piu1_ms_int             ),
-  .sysio_piu1_mt_int              (sysio_piu1_mt_int             ),
-  .sysio_piu1_se_int              (sysio_piu1_se_int             ),
-  .sysio_piu1_ss_int              (sysio_piu1_ss_int             ),
-  .sysio_piu1_st_int              (sysio_piu1_st_int             )
-);
-
-// &Connect(.forever_cpuclk   (forever_cpuclk)); @435
-// &Connect(.cpurst_b         (cpurst_b      )); @436
-// &Connect(.clk_en           (axim_clk_en_f )); @437
-// &Connect(.apb_clk_en       (apb_clk_en    )); @438
-// &Connect(.slvif_clk_en     (slvif_clk_en_f)); @439
 
 
 
-////IO
 
 
-// //&Force("nonport","pad_core0_acsid"); @1396
-//==========================================================
-//  Instance ct_l2c_top sub module 
-//==========================================================
-// &Instance("ct_l2c_top"); @1400
-ct_l2c_top  x_ct_l2c_top (
-  .ciu_l2c_addr_bank_0            (ciu_l2c_addr_bank_0           ),
-  .ciu_l2c_addr_bank_1            (ciu_l2c_addr_bank_1           ),
-  .ciu_l2c_addr_vld_bank_0        (ciu_l2c_addr_vld_bank_0       ),
-  .ciu_l2c_addr_vld_bank_1        (ciu_l2c_addr_vld_bank_1       ),
-  .ciu_l2c_clr_cp_bank_0          (ciu_l2c_clr_cp_bank_0         ),
-  .ciu_l2c_clr_cp_bank_1          (ciu_l2c_clr_cp_bank_1         ),
-  .ciu_l2c_ctcq_req_bank_0        (ciu_l2c_ctcq_req_bank_0       ),
-  .ciu_l2c_ctcq_req_bank_1        (ciu_l2c_ctcq_req_bank_1       ),
-  .ciu_l2c_data_latency           (ciu_l2c_data_latency          ),
-  .ciu_l2c_data_setup             (ciu_l2c_data_setup            ),
-  .ciu_l2c_data_vld_bank_0        (ciu_l2c_data_vld_bank_0       ),
-  .ciu_l2c_data_vld_bank_1        (ciu_l2c_data_vld_bank_1       ),
-  .ciu_l2c_dca_addr_bank_0        (ciu_l2c_dca_addr_bank_0       ),
-  .ciu_l2c_dca_addr_bank_1        (ciu_l2c_dca_addr_bank_1       ),
-  .ciu_l2c_dca_req_bank_0         (ciu_l2c_dca_req_bank_0        ),
-  .ciu_l2c_dca_req_bank_1         (ciu_l2c_dca_req_bank_1        ),
-  .ciu_l2c_hpcp_bus_bank_0        (ciu_l2c_hpcp_bus_bank_0       ),
-  .ciu_l2c_hpcp_bus_bank_1        (ciu_l2c_hpcp_bus_bank_1       ),
-  .ciu_l2c_icc_mid_bank_0         (ciu_l2c_icc_mid_bank_0        ),
-  .ciu_l2c_icc_mid_bank_1         (ciu_l2c_icc_mid_bank_1        ),
-  .ciu_l2c_icc_type_bank_0        (ciu_l2c_icc_type_bank_0       ),
-  .ciu_l2c_icc_type_bank_1        (ciu_l2c_icc_type_bank_1       ),
-  .ciu_l2c_iprf                   (ciu_l2c_iprf                  ),
-  .ciu_l2c_mid_bank_0             (ciu_l2c_mid_bank_0            ),
-  .ciu_l2c_mid_bank_1             (ciu_l2c_mid_bank_1            ),
-  .ciu_l2c_prf_ready              (ciu_l2c_prf_ready             ),
-  .ciu_l2c_rdl_ready_bank_0       (ciu_l2c_rdl_ready_bank_0      ),
-  .ciu_l2c_rdl_ready_bank_1       (ciu_l2c_rdl_ready_bank_1      ),
-  .ciu_l2c_rst_req                (ciu_l2c_rst_req               ),
-  .ciu_l2c_set_cp_bank_0          (ciu_l2c_set_cp_bank_0         ),
-  .ciu_l2c_set_cp_bank_1          (ciu_l2c_set_cp_bank_1         ),
-  .ciu_l2c_sid_bank_0             (ciu_l2c_sid_bank_0            ),
-  .ciu_l2c_sid_bank_1             (ciu_l2c_sid_bank_1            ),
-  .ciu_l2c_snpl2_ready_bank_0     (ciu_l2c_snpl2_ready_bank_0    ),
-  .ciu_l2c_snpl2_ready_bank_1     (ciu_l2c_snpl2_ready_bank_1    ),
-  .ciu_l2c_src_bank_0             (ciu_l2c_src_bank_0            ),
-  .ciu_l2c_src_bank_1             (ciu_l2c_src_bank_1            ),
-  .ciu_l2c_tag_latency            (ciu_l2c_tag_latency           ),
-  .ciu_l2c_tag_setup              (ciu_l2c_tag_setup             ),
-  .ciu_l2c_tprf                   (ciu_l2c_tprf                  ),
-  .ciu_l2c_type_bank_0            (ciu_l2c_type_bank_0           ),
-  .ciu_l2c_type_bank_1            (ciu_l2c_type_bank_1           ),
-  .ciu_l2c_wdata_bank_0           (ciu_l2c_wdata_bank_0          ),
-  .ciu_l2c_wdata_bank_1           (ciu_l2c_wdata_bank_1          ),
-  .ciu_top_clk                    (ciu_top_clk                   ),
-  .ciu_xx_no_op                   (ciu_xx_no_op                  ),
-  .cpurst_b                       (cpurst_b                      ),
-  .forever_cpuclk                 (forever_cpuclk                ),
-  .l2c_ciu_addr_ready_bank_0      (l2c_ciu_addr_ready_bank_0     ),
-  .l2c_ciu_addr_ready_bank_1      (l2c_ciu_addr_ready_bank_1     ),
-  .l2c_ciu_cmplt_bank_0           (l2c_ciu_cmplt_bank_0          ),
-  .l2c_ciu_cmplt_bank_1           (l2c_ciu_cmplt_bank_1          ),
-  .l2c_ciu_cp_bank_0              (l2c_ciu_cp_bank_0             ),
-  .l2c_ciu_cp_bank_1              (l2c_ciu_cp_bank_1             ),
-  .l2c_ciu_ctcq_cmplt_bank_0      (l2c_ciu_ctcq_cmplt_bank_0     ),
-  .l2c_ciu_ctcq_cmplt_bank_1      (l2c_ciu_ctcq_cmplt_bank_1     ),
-  .l2c_ciu_ctcq_ready_bank_0      (l2c_ciu_ctcq_ready_bank_0     ),
-  .l2c_ciu_ctcq_ready_bank_1      (l2c_ciu_ctcq_ready_bank_1     ),
-  .l2c_ciu_data_bank_0            (l2c_ciu_data_bank_0           ),
-  .l2c_ciu_data_bank_1            (l2c_ciu_data_bank_1           ),
-  .l2c_ciu_data_ready_bank_0      (l2c_ciu_data_ready_bank_0     ),
-  .l2c_ciu_data_ready_bank_1      (l2c_ciu_data_ready_bank_1     ),
-  .l2c_ciu_data_ready_gate_bank_0 (l2c_ciu_data_ready_gate_bank_0),
-  .l2c_ciu_data_ready_gate_bank_1 (l2c_ciu_data_ready_gate_bank_1),
-  .l2c_ciu_dbg_info               (l2c_ciu_dbg_info              ),
-  .l2c_ciu_dca_cmplt_bank_0       (l2c_ciu_dca_cmplt_bank_0      ),
-  .l2c_ciu_dca_cmplt_bank_1       (l2c_ciu_dca_cmplt_bank_1      ),
-  .l2c_ciu_dca_data_bank_0        (l2c_ciu_dca_data_bank_0       ),
-  .l2c_ciu_dca_data_bank_1        (l2c_ciu_dca_data_bank_1       ),
-  .l2c_ciu_dca_ready_bank_0       (l2c_ciu_dca_ready_bank_0      ),
-  .l2c_ciu_dca_ready_bank_1       (l2c_ciu_dca_ready_bank_1      ),
-  .l2c_ciu_hpcp_acc_inc_bank_0    (l2c_ciu_hpcp_acc_inc_bank_0   ),
-  .l2c_ciu_hpcp_acc_inc_bank_1    (l2c_ciu_hpcp_acc_inc_bank_1   ),
-  .l2c_ciu_hpcp_mid_bank_0        (l2c_ciu_hpcp_mid_bank_0       ),
-  .l2c_ciu_hpcp_mid_bank_1        (l2c_ciu_hpcp_mid_bank_1       ),
-  .l2c_ciu_hpcp_miss_inc_bank_0   (l2c_ciu_hpcp_miss_inc_bank_0  ),
-  .l2c_ciu_hpcp_miss_inc_bank_1   (l2c_ciu_hpcp_miss_inc_bank_1  ),
-  .l2c_ciu_prf_addr               (l2c_ciu_prf_addr              ),
-  .l2c_ciu_prf_prot               (l2c_ciu_prf_prot              ),
-  .l2c_ciu_prf_vld                (l2c_ciu_prf_vld               ),
-  .l2c_ciu_rdl_addr_bank_0        (l2c_ciu_rdl_addr_bank_0       ),
-  .l2c_ciu_rdl_addr_bank_1        (l2c_ciu_rdl_addr_bank_1       ),
-  .l2c_ciu_rdl_dvld_bank_0        (l2c_ciu_rdl_dvld_bank_0       ),
-  .l2c_ciu_rdl_dvld_bank_1        (l2c_ciu_rdl_dvld_bank_1       ),
-  .l2c_ciu_rdl_mid_bank_0         (l2c_ciu_rdl_mid_bank_0        ),
-  .l2c_ciu_rdl_mid_bank_1         (l2c_ciu_rdl_mid_bank_1        ),
-  .l2c_ciu_rdl_prot_bank_0        (l2c_ciu_rdl_prot_bank_0       ),
-  .l2c_ciu_rdl_prot_bank_1        (l2c_ciu_rdl_prot_bank_1       ),
-  .l2c_ciu_rdl_rvld_bank_0        (l2c_ciu_rdl_rvld_bank_0       ),
-  .l2c_ciu_rdl_rvld_bank_1        (l2c_ciu_rdl_rvld_bank_1       ),
-  .l2c_ciu_resp_bank_0            (l2c_ciu_resp_bank_0           ),
-  .l2c_ciu_resp_bank_1            (l2c_ciu_resp_bank_1           ),
-  .l2c_ciu_sid_bank_0             (l2c_ciu_sid_bank_0            ),
-  .l2c_ciu_sid_bank_1             (l2c_ciu_sid_bank_1            ),
-  .l2c_ciu_snpl2_addr_bank_0      (l2c_ciu_snpl2_addr_bank_0     ),
-  .l2c_ciu_snpl2_addr_bank_1      (l2c_ciu_snpl2_addr_bank_1     ),
-  .l2c_ciu_snpl2_ini_sid_bank_0   (l2c_ciu_snpl2_ini_sid_bank_0  ),
-  .l2c_ciu_snpl2_ini_sid_bank_1   (l2c_ciu_snpl2_ini_sid_bank_1  ),
-  .l2c_ciu_snpl2_vld_bank_0       (l2c_ciu_snpl2_vld_bank_0      ),
-  .l2c_ciu_snpl2_vld_bank_1       (l2c_ciu_snpl2_vld_bank_1      ),
-  .l2c_data_clk_bank_0            (l2c_data_clk_bank_0           ),
-  .l2c_data_clk_bank_1            (l2c_data_clk_bank_1           ),
-  .l2c_data_ram_clk_en_bank_0     (l2c_data_ram_clk_en_bank_0    ),
-  .l2c_data_ram_clk_en_bank_1     (l2c_data_ram_clk_en_bank_1    ),
-  .l2c_icg_en                     (l2c_icg_en                    ),
-  .l2c_sysio_flush_done           (l2c_sysio_flush_done          ),
-  .l2c_sysio_flush_idle           (l2c_sysio_flush_idle          ),
-  .l2c_tag_clk_bank_0             (l2c_tag_clk_bank_0            ),
-  .l2c_tag_clk_bank_1             (l2c_tag_clk_bank_1            ),
-  .l2c_tag_ram_clk_en_bank_0      (l2c_tag_ram_clk_en_bank_0     ),
-  .l2c_tag_ram_clk_en_bank_1      (l2c_tag_ram_clk_en_bank_1     ),
-  .l2c_xx_no_op                   (l2c_xx_no_op                  ),
-  .pad_yy_icg_scan_en             (pad_yy_icg_scan_en            ),
-  .sysio_l2c_flush_req            (sysio_l2c_flush_req           )
-);
-
-// &Connect(.forever_cpuclk   (forever_cpuclk)); @1401
-// &Connect(.cpurst_b         (cpurst_b )); @1402
-// &Connect(.mem_cfg_in       (pad_cpu_mem_cfg_in)); @1404
-
-//==========================================================
-//  Instance clint_top
-//==========================================================
-// &Instance("ct_clint_top"); @1410
-ct_clint_top  x_ct_clint_top (
-  .apb_clk_en         (apb_clk_en        ),
-  .ciu_clint_icg_en   (ciu_clint_icg_en  ),
-  .clint_core0_ms_int (clint_core0_ms_int),
-  .clint_core0_mt_int (clint_core0_mt_int),
-  .clint_core0_ss_int (clint_core0_ss_int),
-  .clint_core0_st_int (clint_core0_st_int),
-  .clint_core1_ms_int (clint_core1_ms_int),
-  .clint_core1_mt_int (clint_core1_mt_int),
-  .clint_core1_ss_int (clint_core1_ss_int),
-  .clint_core1_st_int (clint_core1_st_int),
-  .cpurst_b           (apbrst_b          ),
-  .forever_apbclk     (apb_clk           ),
-  .forever_cpuclk     (forever_cpuclk    ),
-  .pad_yy_icg_scan_en (pad_yy_icg_scan_en),
-  .paddr              (paddr             ),
-  .penable            (penable           ),
-  .perr_clint         (perr_clint        ),
-  .pprot              (pprot             ),
-  .prdata_clint       (prdata_clint      ),
-  .pready_clint       (pready_clint      ),
-  .psel_clint         (psel_clint        ),
-  .pwdata             (pwdata            ),
-  .pwrite             (pwrite            ),
-  .sysio_clint_mtime  (sysio_clint_mtime )
-);
-
-// &Connect(.forever_cpuclk   (forever_cpuclk)); @1411
-// &Connect(.forever_apbclk   (apb_clk )); @1412
-// &Connect(.cpurst_b         (apbrst_b )); @1413
-
-//==========================================================
-//  Instance plic_top
-//==========================================================
-plic_top #(.INT_NUM(`PLIC_INT_NUM+16),
-              .HART_NUM(`PLIC_HART_NUM),
-              .ID_NUM(`PLIC_ID_NUM),
-              .PRIO_BIT(`PLIC_PRIO_BIT),
-              .MAX_HART_NUM(`MAX_HART_NUM)) x_plic_top(
-  .plic_hartx_mint_req    (plic_hartx_mint_req  ),
-  .plic_hartx_sint_req    (plic_hartx_sint_req  ),
-  .ciu_plic_paddr         (paddr[26:0]          ),
-  .ciu_plic_penable       (penable              ),
-  .ciu_plic_psel          (psel_plic            ),
-  .ciu_plic_pprot         (pprot                ),
-  .ciu_plic_pwdata        (pwdata               ),
-  .ciu_plic_pwrite        (pwrite               ),
-  .pad_plic_int_vld       (plic_int_vld         ),
-  .pad_plic_int_cfg       (plic_int_cfg         ),
-  .ciu_plic_icg_en        (ciu_plic_icg_en      ),
-  .pad_yy_icg_scan_en     (pad_yy_icg_scan_en ),
-  .plic_ciu_prdata        (prdata_plic          ),
-  .plic_ciu_pready        (pready_plic          ),
-  .plic_ciu_pslverr       (perr_plic            ),
-  .plic_clk               (apb_clk              ),
-  .plicrst_b              (apbrst_b            )
-);
-// &Force("input","pad_plic_int_vld"); @1446
-// &Force("bus","pad_plic_int_vld",`PLIC_INT_NUM-1,0); @1447
-// &Force("input","pad_plic_int_cfg"); @1448
-// &Force("bus","pad_plic_int_cfg",`PLIC_INT_NUM-1,0); @1449
-// &Force("nonport","plic_hartx_mint_req"); @1450
-// &Force("nonport","plic_hartx_sint_req"); @1451
-// &Force("nonport","perr_plic"); @1452
-// &Force("nonport","prdata_plic"); @1453
-// &Force("nonport","pready_plic"); @1454
-// &Force("nonport","psel_plic"); @1455
-// &Force("nonport","ciu_plic_icg_en"); @1456
-// &Force("nonport","plic_int_vld"); @1457
-// &Force("nonport","plic_int_cfg"); @1458
-// &Force("nonport","pcid"); @1459
-// &Force("nonport","psec"); @1460
-// &Force("nonport","ciu_plic_core_sec"); @1461
-assign plic_int_vld[`PLIC_INT_NUM+15:0] = {pad_plic_int_vld[`PLIC_INT_NUM-1:0],14'b0,l2c_plic_ecc_int_vld,1'b0};
-assign plic_int_cfg[`PLIC_INT_NUM+15:0] = {pad_plic_int_cfg[`PLIC_INT_NUM-1:0],16'b0};
-// &Depend("ct_plic_top_dummy.v"); @1465
-
-assign plic_core0_me_int  = plic_hartx_mint_req[0];
-assign plic_core0_se_int  = plic_hartx_sint_req[0];
-assign plic_core1_me_int  = plic_hartx_mint_req[1];
-assign plic_core1_se_int  = plic_hartx_sint_req[1];
 //==========================================================
 //  Instance ct_reset_top sub module 
 //==========================================================
@@ -1723,159 +1048,8 @@ ct_mp_clk_top  x_ct_mp_clk_top (
 //         sysio
 //==========================================================
 // &Instance("ct_sysio_top"); @1515
-ct_sysio_top  x_ct_sysio_top (
-  .apb_clk_en                 (apb_clk_en                ),
-  .axim_clk_en                (axim_clk_en_f             ),
-  .ciu_sysio_icg_en           (ciu_sysio_icg_en          ),
-  .ciu_xx_no_op               (ciu_xx_no_op              ),
-  .clint_core0_ms_int         (clint_core0_ms_int        ),
-  .clint_core0_mt_int         (clint_core0_mt_int        ),
-  .clint_core0_ss_int         (clint_core0_ss_int        ),
-  .clint_core0_st_int         (clint_core0_st_int        ),
-  .clint_core1_ms_int         (clint_core1_ms_int        ),
-  .clint_core1_mt_int         (clint_core1_mt_int        ),
-  .clint_core1_ss_int         (clint_core1_ss_int        ),
-  .clint_core1_st_int         (clint_core1_st_int        ),
-  .core0_pad_jdb_pm           (core0_pad_jdb_pm          ),
-  .core0_pad_lpmd_b           (core0_pad_lpmd_b          ),
-  .core1_pad_jdb_pm           (core1_pad_jdb_pm          ),
-  .core1_pad_lpmd_b           (core1_pad_lpmd_b          ),
-  .cpu_pad_l2cache_flush_done (cpu_pad_l2cache_flush_done),
-  .cpu_pad_no_op              (cpu_pad_no_op             ),
-  .cpurst_b                   (cpurst_b                  ),
-  .forever_cpuclk             (forever_cpuclk            ),
-  .l2c_sysio_flush_done       (l2c_sysio_flush_done      ),
-  .l2c_sysio_flush_idle       (l2c_sysio_flush_idle      ),
-  .pad_core0_dbg_mask         (pad_core0_dbg_mask        ),
-  .pad_core0_dbgrq_b          (pad_core0_dbgrq_b         ),
-  .pad_core1_dbg_mask         (pad_core1_dbg_mask        ),
-  .pad_core1_dbgrq_b          (pad_core1_dbgrq_b         ),
-  .pad_cpu_apb_base           (pad_cpu_apb_base          ),
-  .pad_cpu_l2cache_flush_req  (pad_cpu_l2cache_flush_req ),
-  .pad_cpu_sys_cnt            (pad_cpu_sys_cnt           ),
-  .pad_yy_icg_scan_en         (pad_yy_icg_scan_en        ),
-  .piu0_sysio_jdb_pm          (piu0_sysio_jdb_pm         ),
-  .piu0_sysio_lpmd_b          (piu0_sysio_lpmd_b         ),
-  .piu1_sysio_jdb_pm          (piu1_sysio_jdb_pm         ),
-  .piu1_sysio_lpmd_b          (piu1_sysio_lpmd_b         ),
-  .plic_core0_me_int          (plic_core0_me_int         ),
-  .plic_core0_se_int          (plic_core0_se_int         ),
-  .plic_core1_me_int          (plic_core1_me_int         ),
-  .plic_core1_se_int          (plic_core1_se_int         ),
-  .sysio_ciu_apb_base         (sysio_ciu_apb_base        ),
-  .sysio_clint_mtime          (sysio_clint_mtime         ),
-  .sysio_had_dbg_mask         (sysio_had_dbg_mask        ),
-  .sysio_l2c_flush_req        (sysio_l2c_flush_req       ),
-  .sysio_piu0_dbgrq_b         (sysio_piu0_dbgrq_b        ),
-  .sysio_piu0_me_int          (sysio_piu0_me_int         ),
-  .sysio_piu0_ms_int          (sysio_piu0_ms_int         ),
-  .sysio_piu0_mt_int          (sysio_piu0_mt_int         ),
-  .sysio_piu0_se_int          (sysio_piu0_se_int         ),
-  .sysio_piu0_ss_int          (sysio_piu0_ss_int         ),
-  .sysio_piu0_st_int          (sysio_piu0_st_int         ),
-  .sysio_piu1_dbgrq_b         (sysio_piu1_dbgrq_b        ),
-  .sysio_piu1_me_int          (sysio_piu1_me_int         ),
-  .sysio_piu1_ms_int          (sysio_piu1_ms_int         ),
-  .sysio_piu1_mt_int          (sysio_piu1_mt_int         ),
-  .sysio_piu1_se_int          (sysio_piu1_se_int         ),
-  .sysio_piu1_ss_int          (sysio_piu1_ss_int         ),
-  .sysio_piu1_st_int          (sysio_piu1_st_int         ),
-  .sysio_xx_apb_base          (sysio_xx_apb_base         ),
-  .sysio_xx_time              (sysio_xx_time             )
-);
 
-// &Connect(.axim_clk_en    (axim_clk_en_f)); @1516
-
-//==========================================================
-//          JTAG
-//==========================================================
-
-// &Instance("ct_had_common_top"); @1522
-ct_had_common_top  x_ct_had_common_top (
-  .apbif_had_pctrace_inv  (apbif_had_pctrace_inv ),
-  .ciu_had_dbg_info       (ciu_had_dbg_info      ),
-  .core0_dbg_ack_pc       (core0_dbg_ack_pc      ),
-  .core0_enter_dbg_req_i  (core0_enter_dbg_req_i ),
-  .core0_enter_dbg_req_o  (core0_enter_dbg_req_o ),
-  .core0_exit_dbg_req_i   (core0_exit_dbg_req_i  ),
-  .core0_exit_dbg_req_o   (core0_exit_dbg_req_o  ),
-  .core0_had_dbg_mask     (core0_had_dbg_mask    ),
-  .core0_regs_serial_data (core0_regs_serial_data),
-  .core0_rst_b            (core0_rst_b           ),
-  .core1_dbg_ack_pc       (core1_dbg_ack_pc      ),
-  .core1_enter_dbg_req_i  (core1_enter_dbg_req_i ),
-  .core1_enter_dbg_req_o  (core1_enter_dbg_req_o ),
-  .core1_exit_dbg_req_i   (core1_exit_dbg_req_i  ),
-  .core1_exit_dbg_req_o   (core1_exit_dbg_req_o  ),
-  .core1_had_dbg_mask     (core1_had_dbg_mask    ),
-  .core1_regs_serial_data (core1_regs_serial_data),
-  .core1_rst_b            (core1_rst_b           ),
-  .cpurst_b               (cpurst_b              ),
-  .forever_cpuclk         (forever_cpuclk        ),
-  .had_pad_jtg_tdo        (had_pad_jtg_tdo       ),
-  .had_pad_jtg_tdo_en     (had_pad_jtg_tdo_en    ),
-  .ir_corex_wdata         (ir_corex_wdata        ),
-  .l2c_had_dbg_info       (l2c_had_dbg_info      ),
-  .pad_had_jtg_tdi        (pad_had_jtg_tdi       ),
-  .pad_had_jtg_tms        (pad_had_jtg_tms       ),
-  .pad_yy_icg_scan_en     (pad_yy_icg_scan_en    ),
-  .perr_had               (perr_had              ),
-  .prdata_had             (prdata_had            ),
-  .pready_had             (pready_had            ),
-  .psel_had               (psel_had              ),
-  .sm_update_dr           (sm_update_dr          ),
-  .sm_update_ir           (sm_update_ir          ),
-  .sysio_had_dbg_mask     (sysio_had_dbg_mask    ),
-  .tclk                   (forever_jtgclk        ),
-  .trst_b                 (trst_b                )
-);
-
-// &Connect(.forever_cpuclk(forever_cpuclk  ), @1523
-//          .tclk          (forever_jtgclk  ), @1524
-//          .cpurst_b      (cpurst_b        ), @1525
-//          .trst_b        (trst_b          ) @1526
-//         ); @1527
-
-////scan chain
-// &Force("input","pad_yy_scan_enable"); @1530
-// //&Force("input","ct_top_si_1"); @1531
-// //&Force("input","ct_top_si_2"); @1532
-// //&Force("input","ct_top_si_3"); @1533
-// //&Force("input","ct_top_si_4"); @1534
-// //&Force("input","ct_top_si_5"); @1535
-// //&Force("input","ct_top_si_6"); @1536
-// //&Force("input","ct_top_si_7"); @1537
-// //&Force("input","ct_top_si_8"); @1538
-// //&Force("output","ct_top_so_1"); @1539
-// //&Force("output","ct_top_so_2"); @1540
-// //&Force("output","ct_top_so_3"); @1541
-// //&Force("output","ct_top_so_4"); @1542
-// //&Force("output","ct_top_so_5"); @1543
-// //&Force("output","ct_top_so_6"); @1544
-// //&Force("output","ct_top_so_7"); @1545
-// //&Force("output","ct_top_so_8"); @1546
-//
-////occ signals 
-// //  &Force("input", "ate_clock"); @1550
-// //  &Force("input", "test_mode"); @1551
-// //  &Force("input", "pll_bypass"); @1552
-// //  &Force("input", "pll_reset"); @1553
-// //  &Force("input", "scan_compression_enable"); @1554
-// //  &Force("input", "wrp_si"); @1555
-// //  &Force("input", "wrp_shift"); @1556
-// //  &Force("input", "mode1"); @1557
-// //  &Force("input", "mode2"); @1558
-// //  &Force("input", "mode3"); @1559
-// //  &Force("input", "wrp_clock"); @1560
-// //  &Force("output", "wrp_so"); @1561
-////&Shell("../../../tools/scripts/delt_top_port");
-
-//==========================================================
-//          coverage
-//==========================================================
-// &Instance("ct_coverage"); @1569
-
-
+assign core1_cpu_no_retire = 1'b0;
 assign core2_cpu_no_retire = 1'b0;
 assign core3_cpu_no_retire = 1'b0;
 assign cpu_debug_port = core0_cpu_no_retire

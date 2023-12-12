@@ -1,0 +1,42 @@
+From ee962beb4b4e9eebd783a860e079a04e1f314be9 Mon Sep 17 00:00:00 2001
+From: Zexin Fu <zexifu@iis.ee.ethz.ch>
+Date: Wed, 30 Apr 2025 23:24:40 +0200
+Subject: [PATCH 20/24] Fix corner case: aw send fast and get b resp, while the
+ ar haven't sent out and the rb_entry_biu_id hasn't get updated.
+
+---
+ C910_RTL_FACTORY/gen_rtl/lsu/rtl/ct_lsu_rb_entry.v | 11 ++++++++++-
+ 1 file changed, 10 insertions(+), 1 deletion(-)
+
+diff --git a/C910_RTL_FACTORY/gen_rtl/lsu/rtl/ct_lsu_rb_entry.v b/C910_RTL_FACTORY/gen_rtl/lsu/rtl/ct_lsu_rb_entry.v
+index 2bdf8d1..8503b8f 100644
+--- a/C910_RTL_FACTORY/gen_rtl/lsu/rtl/ct_lsu_rb_entry.v
++++ b/C910_RTL_FACTORY/gen_rtl/lsu/rtl/ct_lsu_rb_entry.v
+@@ -618,6 +618,11 @@ parameter BYTE        = 2'b00,
+           HALF        = 2'b01,
+           WORD        = 2'b10,
+           DWORD       = 2'b11;
++
++parameter BIU_R_NC_ID         = 5'd24,
++          BIU_R_SO_ID         = 5'd29,
++          BIU_R_NC_ATOM_ID    = 5'd30,
++          BIU_R_SYNC_FENCE_ID = 5'd31;
+ //==========================================================
+ //                 Instance of Gated Cell  
+ //==========================================================
+@@ -1238,7 +1243,11 @@ assign rb_entry_biu_req         = rb_entry_state[3:0]  ==  REQ_BIU;
+ assign rb_entry_r_id_hit    = biu_lsu_r_vld
+                               &&  (rb_entry_biu_id[4:0]  ==  biu_lsu_r_id[4:0]);
+ assign rb_entry_b_id_hit    = biu_lsu_b_vld
+-                              &&  (rb_entry_biu_id[4:0]  ==  biu_lsu_b_id[4:0]);
++                              &&  ((rb_entry_biu_id[4:0]  ==  biu_lsu_b_id[4:0]) ||
++                                    // Add this condition for corner case: aw send fast and get b resp,
++                                    // while the ar haven't sent out and the rb_entry_biu_id hasn't get updated:
++                                   ((biu_lsu_b_id[4:0]  ==  BIU_R_SYNC_FENCE_ID) && rb_entry_sync_fence)
++                                  );
+ 
+ //-----------biu response signal--------
+ assign rb_entry_biu_r_resp_set  = rb_entry_r_id_hit
+-- 
+2.39.3
+

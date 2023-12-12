@@ -14,7 +14,9 @@ limitations under the License.
 */
 
 // &ModuleBeg; @26
-module ct_lsu_ctrl(
+module ct_lsu_ctrl #(
+  parameter LFB_DATA_ENTRY = 8
+)(
   cp0_lsu_dcache_pref_dist,
   cp0_lsu_icg_en,
   cp0_lsu_l2_pref_dist,
@@ -380,7 +382,7 @@ input            wmb_st_wb_cmplt_req;
 input            wmb_write_req_icc;                
 output           ctrl_ld_clk;                      
 output           ctrl_st_clk;                      
-output  [183:0]  lsu_had_debug_info;               
+output  [183-2*2+LFB_DATA_ENTRY*2:0]  lsu_had_debug_info;               
 output           lsu_had_no_op;                    
 output           lsu_hpcp_cache_read_access;       
 output           lsu_hpcp_cache_read_miss;         
@@ -505,13 +507,13 @@ wire    [1  :0]  lsu_had_cdr_state;
 wire    [5  :0]  lsu_had_ctcq_entry_2_cmplt;       
 wire    [5  :0]  lsu_had_ctcq_entry_cmplt;         
 wire    [5  :0]  lsu_had_ctcq_entry_vld;           
-wire    [183:0]  lsu_had_debug_info;               
+wire    [183-2*2+LFB_DATA_ENTRY*2:0]  lsu_had_debug_info;               
 wire    [2  :0]  lsu_had_icc_state;                
 wire    [7  :0]  lsu_had_lfb_addr_entry_dcache_hit; 
 wire    [7  :0]  lsu_had_lfb_addr_entry_rcl_done;  
 wire    [7  :0]  lsu_had_lfb_addr_entry_vld;       
-wire    [1  :0]  lsu_had_lfb_data_entry_last;      
-wire    [1  :0]  lsu_had_lfb_data_entry_vld;       
+wire    [LFB_DATA_ENTRY-1 :0]  lsu_had_lfb_data_entry_last;      
+wire    [LFB_DATA_ENTRY-1 :0]  lsu_had_lfb_data_entry_vld;       
 wire             lsu_had_lfb_lf_sm_vld;            
 wire    [12 :0]  lsu_had_lfb_wakeup_queue;         
 wire    [2  :0]  lsu_had_lm_state;                 
@@ -1000,13 +1002,13 @@ assign lsu_yy_xx_no_op  = wmb_empty
                           &&  vb_empty;
 
 
-assign lsu_had_debug_info[183:0] = {lsu_had_amr_state[2:0],
+assign lsu_had_debug_info[183-2*2+LFB_DATA_ENTRY*2:0] = {lsu_had_amr_state[2:0],
       lsu_had_icc_state[2:0],
       lsu_had_lfb_addr_entry_vld[7:0],
       lsu_had_lfb_addr_entry_rcl_done[7:0],
       lsu_had_lfb_addr_entry_dcache_hit[7:0],
-      lsu_had_lfb_data_entry_vld[1:0],
-      lsu_had_lfb_data_entry_last[1:0],
+      lsu_had_lfb_data_entry_vld[LFB_DATA_ENTRY-1:0],
+      lsu_had_lfb_data_entry_last[LFB_DATA_ENTRY-1:0],
       lsu_had_lfb_lf_sm_vld,
       lsu_had_lfb_wakeup_queue[12:0],
       lsu_had_vb_addr_entry_vld[1:0],

@@ -1737,7 +1737,7 @@ assign mxl[1:0] = 2'b10;
 //  X    V    U    S    M    I   H   F   D   C   A
 assign misa_vector = 1'b0;
 assign misa_hypervisor = 1'b0;
-assign extensions[25:0] = {2'b0, 2'b10, misa_vector, 1'b1, 4'b0100,
+assign extensions[25:0] = {2'b0, 2'b00, misa_vector, 1'b1, 4'b0100,
                                 4'b0001, 4'b0001, misa_hypervisor, 3'b010, 4'b1101};
 assign misa_value[63:0] = {mxl[1:0], 36'b0, extensions[25:0]};
 
@@ -2726,7 +2726,7 @@ begin
   if (!cpurst_b)
   begin
     cskyisaee <= 1'b1;
-    maee      <= 1'b1;
+    maee      <= 1'b0;
     insde     <= 1'b0;
     mhrd      <= 1'b0;
     clintee   <= 1'b1;

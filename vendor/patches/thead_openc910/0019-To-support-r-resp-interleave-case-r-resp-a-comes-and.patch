@@ -1,0 +1,92 @@
+From f2d9789a9438d64f9eb8db4c1a0d15077ef33cb7 Mon Sep 17 00:00:00 2001
+From: Zexin Fu <zexifu@iis.ee.ethz.ch>
+Date: Wed, 30 Apr 2025 23:10:29 +0200
+Subject: [PATCH 19/24] To support r resp interleave, case: r resp a comes and
+ allocate a new lfb entry, and before its burst finishing, r resp b comes and
+ it should allocate a new lfb entry, but in original c910 lfb, it will not
+ allocate a new lfb entry entry if there is already a entry with unfinished r
+ burst, fix this by also check the r_id when judging if there is an existing
+ lfb entry.
+
+---
+ C910_RTL_FACTORY/gen_rtl/lsu/rtl/ct_lsu_lfb.v            | 6 +++++-
+ C910_RTL_FACTORY/gen_rtl/lsu/rtl/ct_lsu_lfb_data_entry.v | 4 ++++
+ 2 files changed, 9 insertions(+), 1 deletion(-)
+
+diff --git a/C910_RTL_FACTORY/gen_rtl/lsu/rtl/ct_lsu_lfb.v b/C910_RTL_FACTORY/gen_rtl/lsu/rtl/ct_lsu_lfb.v
+index dadfa70..49af6b8 100644
+--- a/C910_RTL_FACTORY/gen_rtl/lsu/rtl/ct_lsu_lfb.v
++++ b/C910_RTL_FACTORY/gen_rtl/lsu/rtl/ct_lsu_lfb.v
+@@ -374,6 +374,7 @@ wire    [1  :0]  lfb_data_entry_last;
+ wire    [1  :0]  lfb_data_entry_lf_sm_req;            
+ wire    [1  :0]  lfb_data_entry_vld;                  
+ wire    [1  :0]  lfb_data_entry_wait_surplus;         
++wire    [1  :0]  lfb_data_entry_r_id_hit; // to indicate if the id is match the exist data entry, for r data interleave
+ wire             lfb_data_not_full;                   
+ wire             lfb_data_wait_surplus;               
+ wire    [7  :0]  lfb_dcache_arb_ld_data_gateclk_en;   
+@@ -1195,6 +1196,7 @@ ct_lsu_lfb_data_entry  x_ct_lsu_lfb_data_entry_0 (
+   .lfb_data_entry_lf_sm_req_x          (lfb_data_entry_lf_sm_req[0]        ),
+   .lfb_data_entry_vld_x                (lfb_data_entry_vld[0]              ),
+   .lfb_data_entry_wait_surplus_x       (lfb_data_entry_wait_surplus[0]     ),
++  .lfb_data_entry_r_id_hit_x           (lfb_data_entry_r_id_hit[0]         ),
+   .lfb_first_pass_ptr                  (lfb_first_pass_ptr                 ),
+   .lfb_lf_sm_data_grnt_x               (lfb_lf_sm_data_grnt[0]             ),
+   .lfb_lf_sm_data_pop_req_x            (lfb_lf_sm_data_pop_req[0]          ),
+@@ -1234,6 +1236,7 @@ ct_lsu_lfb_data_entry  x_ct_lsu_lfb_data_entry_1 (
+   .lfb_data_entry_lf_sm_req_x          (lfb_data_entry_lf_sm_req[1]        ),
+   .lfb_data_entry_vld_x                (lfb_data_entry_vld[1]              ),
+   .lfb_data_entry_wait_surplus_x       (lfb_data_entry_wait_surplus[1]     ),
++  .lfb_data_entry_r_id_hit_x           (lfb_data_entry_r_id_hit[1]         ),
+   .lfb_first_pass_ptr                  (lfb_first_pass_ptr                 ),
+   .lfb_lf_sm_data_grnt_x               (lfb_lf_sm_data_grnt[1]             ),
+   .lfb_lf_sm_data_pop_req_x            (lfb_lf_sm_data_pop_req[1]          ),
+@@ -1481,7 +1484,8 @@ endcase
+ end
+ //------------------create signal---------------------------
+ //if no vld, or only one vld and full, then create
+-assign lfb_data_wait_surplus  = |lfb_data_entry_wait_surplus[LFB_DATA_ENTRY-1:0];
++assign lfb_data_wait_surplus  = |(lfb_data_entry_wait_surplus[LFB_DATA_ENTRY-1:0]
++                                  & lfb_data_entry_r_id_hit[LFB_DATA_ENTRY-1:0]);
+ 
+ 
+ assign lfb_data_create_vld          = lfb_biu_r_id_hit
+diff --git a/C910_RTL_FACTORY/gen_rtl/lsu/rtl/ct_lsu_lfb_data_entry.v b/C910_RTL_FACTORY/gen_rtl/lsu/rtl/ct_lsu_lfb_data_entry.v
+index bd40a43..8892057 100644
+--- a/C910_RTL_FACTORY/gen_rtl/lsu/rtl/ct_lsu_lfb_data_entry.v
++++ b/C910_RTL_FACTORY/gen_rtl/lsu/rtl/ct_lsu_lfb_data_entry.v
+@@ -38,6 +38,7 @@ module ct_lsu_lfb_data_entry(
+   lfb_data_entry_lf_sm_req_x,
+   lfb_data_entry_vld_x,
+   lfb_data_entry_wait_surplus_x,
++  lfb_data_entry_r_id_hit_x,
+   lfb_first_pass_ptr,
+   lfb_lf_sm_data_grnt_x,
+   lfb_lf_sm_data_pop_req_x,
+@@ -82,6 +83,7 @@ output           lfb_data_entry_last_x;
+ output           lfb_data_entry_lf_sm_req_x;        
+ output           lfb_data_entry_vld_x;              
+ output           lfb_data_entry_wait_surplus_x;     
++output           lfb_data_entry_r_id_hit_x; // to indicate if the r id is match the exist data entry, for r data interleave
+ 
+ // &Regs; @29
+ reg     [7  :0]  lfb_data_entry_addr_id;            
+@@ -152,6 +154,7 @@ wire             lfb_data_entry_r_id_hit;
+ wire             lfb_data_entry_vld_x;              
+ wire             lfb_data_entry_wait_surplus;       
+ wire             lfb_data_entry_wait_surplus_x;     
++wire             lfb_data_entry_r_id_hit_x;
+ wire    [3  :0]  lfb_first_pass_ptr;                
+ wire             lfb_lf_sm_data_grnt;               
+ wire             lfb_lf_sm_data_grnt_x;             
+@@ -561,6 +564,7 @@ assign lfb_data_entry_data_v[511:0]   = lfb_data_entry_data[511:0];
+ assign lfb_data_entry_last_x          = lfb_data_entry_last;
+ assign lfb_data_entry_wait_surplus_x  = lfb_data_entry_wait_surplus;
+ assign lfb_data_entry_full_x          = lfb_data_entry_full;
++assign lfb_data_entry_r_id_hit_x      = lfb_data_entry_r_id_hit;
+ //-----------request--------------------
+ assign lfb_data_entry_addr_pop_req_v[LFB_ADDR_ENTRY-1:0]  = lfb_data_entry_addr_pop_req[LFB_ADDR_ENTRY-1:0];
+ assign lfb_data_entry_lf_sm_req_x   = lfb_data_entry_lf_sm_req;
+-- 
+2.39.3
+

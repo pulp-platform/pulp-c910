@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-`define APB_BASE_ADDR 40'hb0000000
+`define APB_BASE_ADDR 40'h00000000
 
 `include "cpu_cfig.h"
 
@@ -40,6 +40,14 @@ module cpu_sub_system_axi
   pad_had_jtg_trst_b                       ,
   pad_yy_dft_clk_rst_b                     ,
   pll_cpu_clk                              ,
+  rtc_cpu_clk                              ,
+  // clint
+  ipi_i                                    ,
+  time_irq_i                               ,
+  // plic
+  plic_hartx_mint_req_i                    ,
+  plic_hartx_sint_req_i                    ,
+
   biu_pad_araddr                           ,
   biu_pad_arburst                          ,
   biu_pad_arcache                          ,
@@ -104,6 +112,14 @@ input                  pad_had_jtg_tdi                          ;
 input                  pad_had_jtg_trst_b                       ;
 input                  pad_yy_dft_clk_rst_b                     ;
 input                  pll_cpu_clk                              ;
+input                  rtc_cpu_clk                              ;
+// clint
+input                  ipi_i                                    ;
+input                  time_irq_i                               ;
+// plic
+input      [1  :0]     plic_hartx_mint_req_i                    ;
+input      [1  :0]     plic_hartx_sint_req_i                    ;
+
 output     [39 : 0]    biu_pad_araddr                           ;
 output     [1 : 0]     biu_pad_arburst                          ;
 output     [3 : 0]     biu_pad_arcache                          ;
@@ -169,6 +185,14 @@ wire       [144 - 1 : 0] pad_plic_int_cfg ;
 wire       [144 - 1 : 0] pad_plic_int_vld ;
 wire                   pad_yy_dft_clk_rst_b                     ;
 wire                   pll_cpu_clk                              ;
+wire                   rtc_cpu_clk                              ;
+// clint
+wire                   ipi_i                                    ;
+wire                   time_irq_i                               ;
+// plic
+wire       [1  :0]     plic_hartx_mint_req_i                    ;
+wire       [1  :0]     plic_hartx_sint_req_i                    ;
+
 wire       [39 : 0]    biu_pad_araddr                           ;
 wire       [1 : 0]     biu_pad_arburst                          ;
 wire       [3 : 0]     biu_pad_arcache                          ;
@@ -227,7 +251,7 @@ rv_integration_platform  x_rv_integration_platform (
     .pad_cpu_apb_base                             (`APB_BASE_ADDR                           ),
     .pad_cpu_l2cache_flush_req                    (1'b0                                     ),
     .pad_cpu_rst_b                                (pad_cpu_rst_b                            ),
-    .pad_core0_rvba                               (40'b0                                    ), // Reset vector base address
+    .pad_core0_rvba                               (40'h2000000                                    ), // Reset vector base address
     .pad_cpu_sys_cnt                              (pad_cpu_sys_cnt                          ),
     .pad_had_jtg_tclk                             (pad_had_jtg_tclk                         ),
     .pad_had_jtg_tdi                              (pad_had_jtg_tdi                          ),
@@ -347,7 +371,14 @@ rv_integration_platform  x_rv_integration_platform (
     .cpu_pad_l2cache_flush_done                   (                                         ),
     .cpu_pad_no_op                                (                                         ),
     .had_pad_jtg_tdo                              (had_pad_jtg_tdo                          ),
-    .had_pad_jtg_tdo_en                           (had_pad_jtg_tdo_en                       )
+    .had_pad_jtg_tdo_en                           (had_pad_jtg_tdo_en                       ),
+
+      // clint
+    .ipi_i                                        (ipi_i                                    ),
+    .time_irq_i                                   (time_irq_i                               ),
+      // plic
+    .plic_hartx_mint_req_i                        (plic_hartx_mint_req_i                    ),
+    .plic_hartx_sint_req_i                        (plic_hartx_sint_req_i                    )
   );
 
 
@@ -355,7 +386,7 @@ assign pad_had_jtg_tms     = i_pad_jtg_tms;
 assign biu_pad_lpmd_b[1:0] = core0_pad_lpmd_b;
 
 // system timer simple model
-always@(posedge pll_cpu_clk or negedge pad_cpu_rst_b)
+always@(posedge rtc_cpu_clk or negedge pad_cpu_rst_b)
 begin
   if (!pad_cpu_rst_b)
     pad_cpu_sys_cnt <= 64'b0;

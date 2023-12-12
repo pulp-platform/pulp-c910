@@ -15,7 +15,9 @@ limitations under the License.
 
 `include "cpu_cfig.h"
 
-module ct_lsu_snoop_snq(
+module ct_lsu_snoop_snq #(
+  parameter LFB_DATA_ENTRY = 8
+)(
   arb_snq_entry_oldest_index,
   arb_snq_snoop_addr,
   arb_snq_snoop_depd,
@@ -142,7 +144,7 @@ input            dcache_arb_snq_st_grnt;
 input            forever_cpuclk;                     
 input            ld_da_snq_borrow_sndb;              
 input            ld_da_vb_snq_data_reissue;          
-input   [1  :0]  lfb_snq_bypass_data_id;             
+input   [LFB_DATA_ENTRY-1 :0]  lfb_snq_bypass_data_id;             
 input            lfb_snq_bypass_hit;                 
 input            lfb_snq_bypass_share;               
 input   [33 :0]  lfb_vb_addr_tto6;                   
@@ -222,8 +224,8 @@ output           snq_dcache_arb_st_tag_req;
 output  [2  :0]  snq_dcache_sdb_id;                  
 output  [1  :0]  snq_depd_vb_id;                     
 output           snq_empty;                          
-output  [1  :0]  snq_lfb_bypass_chg_tag;             
-output  [1  :0]  snq_lfb_bypass_invalid;             
+output  [LFB_DATA_ENTRY-1  :0]  snq_lfb_bypass_chg_tag;             
+output  [LFB_DATA_ENTRY-1  :0]  snq_lfb_bypass_invalid;             
 output           snq_lfb_vb_req_hit_idx;             
 output  [33 :0]  snq_lm_dcache_addr_tto6;            
 output           snq_lm_dcache_req_for_inv;          
@@ -292,7 +294,7 @@ wire    [2  :0]  idfifo_entry_id_2;
 wire             ld_da_snq_borrow_sndb;              
 wire             ld_da_vb_snq_data_reissue;          
 wire    [5  :0]  lfb_bypass_vld;                     
-wire    [1  :0]  lfb_snq_bypass_data_id;             
+wire    [LFB_DATA_ENTRY-1 :0]  lfb_snq_bypass_data_id;             
 wire             lfb_snq_bypass_hit;                 
 wire             lfb_snq_bypass_share;               
 wire    [33 :0]  lfb_vb_addr_tto6;                   
@@ -427,10 +429,8 @@ wire    [1  :0]  snq_entry_depd_vb_id_2;
 wire    [1  :0]  snq_entry_depd_vb_id_3;             
 wire    [1  :0]  snq_entry_depd_vb_id_4;             
 wire    [1  :0]  snq_entry_depd_vb_id_5;             
-wire    [5  :0]  snq_entry_lfb_bypass_chg_tag_data0; 
-wire    [5  :0]  snq_entry_lfb_bypass_chg_tag_data1; 
-wire    [5  :0]  snq_entry_lfb_bypass_invalid_data0; 
-wire    [5  :0]  snq_entry_lfb_bypass_invalid_data1; 
+wire    [LFB_DATA_ENTRY-1 :0]  snq_entry_lfb_bypass_chg_tag_data [5  :0];
+wire    [LFB_DATA_ENTRY-1 :0]  snq_entry_lfb_bypass_invalid_data [5  :0];
 wire    [5  :0]  snq_entry_lfb_vb_req_hit_idx;       
 wire    [5  :0]  snq_entry_vb_bypass_invalid;        
 wire    [5  :0]  snq_entry_vb_bypass_readonce;       
@@ -441,8 +441,8 @@ wire    [33 :0]  snq_from_lfb_vb_addr_tto6;
 wire    [39 :0]  snq_from_wmb_read_req_addr;         
 wire    [39 :0]  snq_from_wmb_write_req_addr;        
 wire    [5  :0]  snq_issued;                         
-wire    [1  :0]  snq_lfb_bypass_chg_tag;             
-wire    [1  :0]  snq_lfb_bypass_invalid;             
+wire    [LFB_DATA_ENTRY-1  :0]  snq_lfb_bypass_chg_tag;             
+wire    [LFB_DATA_ENTRY-1  :0]  snq_lfb_bypass_invalid;             
 wire             snq_lfb_data_bypass_hit;            
 wire             snq_lfb_vb_req_hit_idx;             
 wire    [33 :0]  snq_lm_dcache_addr_tto6;            
@@ -1225,11 +1225,19 @@ assign snq_vb_bypass_start[2:0] = snq_vb_bypass_id[2:0];
 assign snq_lfb_data_bypass_hit = lfb_snq_bypass_hit && snq_dcache_snoop_tag_req_before_arb;
 assign lfb_bypass_vld[5:0]     = {6{snq_lfb_data_bypass_hit}} & snq_dcache_snoop_tag_entry_id[5:0];
 
-assign snq_lfb_bypass_invalid[1:0] = {|snq_entry_lfb_bypass_invalid_data1[5:0],
-                                      |snq_entry_lfb_bypass_invalid_data0[5:0]};
-
-assign snq_lfb_bypass_chg_tag[1:0] = {|snq_entry_lfb_bypass_chg_tag_data1[5:0],
-                                      |snq_entry_lfb_bypass_chg_tag_data0[5:0]};    
+wire    [5  :0]  snq_entry_lfb_bypass_chg_tag_data_tmp [LFB_DATA_ENTRY-1 :0];
+wire    [5  :0]  snq_entry_lfb_bypass_invalid_data_tmp [LFB_DATA_ENTRY-1 :0];
+genvar i,j;
+generate
+  for(i = 0; i < LFB_DATA_ENTRY; i=i+1) begin
+    for(j = 0; j < 6; j=j+1) begin
+      assign snq_entry_lfb_bypass_chg_tag_data_tmp[i][j] = snq_entry_lfb_bypass_invalid_data[j][i];
+      assign snq_entry_lfb_bypass_invalid_data_tmp[i][j] = snq_entry_lfb_bypass_chg_tag_data[j][i];
+    end
+    assign snq_lfb_bypass_invalid[i] = |snq_entry_lfb_bypass_chg_tag_data_tmp[i][5:0];
+    assign snq_lfb_bypass_chg_tag[i] = |snq_entry_lfb_bypass_invalid_data_tmp[i][5:0];
+  end
+endgenerate
                                      
 //==========================================================
 //               snq to dcache interface
@@ -1454,10 +1462,8 @@ ct_lsu_snoop_snq_entry  x_ct_lsu_snoop_snq_entry_0 (
   .snq_depd_remove                       (snq_depd_remove                      ),
   .snq_entry_bypass_db_id_v              (snq_entry_bypass_db_id_0             ),
   .snq_entry_depd_vb_id_v                (snq_entry_depd_vb_id_0               ),
-  .snq_entry_lfb_bypass_chg_tag_data0_x  (snq_entry_lfb_bypass_chg_tag_data0[0]),
-  .snq_entry_lfb_bypass_chg_tag_data1_x  (snq_entry_lfb_bypass_chg_tag_data1[0]),
-  .snq_entry_lfb_bypass_invalid_data0_x  (snq_entry_lfb_bypass_invalid_data0[0]),
-  .snq_entry_lfb_bypass_invalid_data1_x  (snq_entry_lfb_bypass_invalid_data1[0]),
+  .snq_entry_lfb_bypass_chg_tag_data_x   (snq_entry_lfb_bypass_chg_tag_data[0] ),
+  .snq_entry_lfb_bypass_invalid_data_x   (snq_entry_lfb_bypass_invalid_data[0] ),
   .snq_entry_lfb_vb_req_hit_idx_x        (snq_entry_lfb_vb_req_hit_idx[0]      ),
   .snq_entry_vb_bypass_invalid_x         (snq_entry_vb_bypass_invalid[0]       ),
   .snq_entry_vb_bypass_readonce_x        (snq_entry_vb_bypass_readonce[0]      ),
@@ -1521,10 +1527,8 @@ ct_lsu_snoop_snq_entry  x_ct_lsu_snoop_snq_entry_1 (
   .snq_depd_remove                       (snq_depd_remove                      ),
   .snq_entry_bypass_db_id_v              (snq_entry_bypass_db_id_1             ),
   .snq_entry_depd_vb_id_v                (snq_entry_depd_vb_id_1               ),
-  .snq_entry_lfb_bypass_chg_tag_data0_x  (snq_entry_lfb_bypass_chg_tag_data0[1]),
-  .snq_entry_lfb_bypass_chg_tag_data1_x  (snq_entry_lfb_bypass_chg_tag_data1[1]),
-  .snq_entry_lfb_bypass_invalid_data0_x  (snq_entry_lfb_bypass_invalid_data0[1]),
-  .snq_entry_lfb_bypass_invalid_data1_x  (snq_entry_lfb_bypass_invalid_data1[1]),
+  .snq_entry_lfb_bypass_chg_tag_data_x   (snq_entry_lfb_bypass_chg_tag_data[1] ),
+  .snq_entry_lfb_bypass_invalid_data_x   (snq_entry_lfb_bypass_invalid_data[1] ),
   .snq_entry_lfb_vb_req_hit_idx_x        (snq_entry_lfb_vb_req_hit_idx[1]      ),
   .snq_entry_vb_bypass_invalid_x         (snq_entry_vb_bypass_invalid[1]       ),
   .snq_entry_vb_bypass_readonce_x        (snq_entry_vb_bypass_readonce[1]      ),
@@ -1588,10 +1592,8 @@ ct_lsu_snoop_snq_entry  x_ct_lsu_snoop_snq_entry_2 (
   .snq_depd_remove                       (snq_depd_remove                      ),
   .snq_entry_bypass_db_id_v              (snq_entry_bypass_db_id_2             ),
   .snq_entry_depd_vb_id_v                (snq_entry_depd_vb_id_2               ),
-  .snq_entry_lfb_bypass_chg_tag_data0_x  (snq_entry_lfb_bypass_chg_tag_data0[2]),
-  .snq_entry_lfb_bypass_chg_tag_data1_x  (snq_entry_lfb_bypass_chg_tag_data1[2]),
-  .snq_entry_lfb_bypass_invalid_data0_x  (snq_entry_lfb_bypass_invalid_data0[2]),
-  .snq_entry_lfb_bypass_invalid_data1_x  (snq_entry_lfb_bypass_invalid_data1[2]),
+  .snq_entry_lfb_bypass_chg_tag_data_x   (snq_entry_lfb_bypass_chg_tag_data[2] ),
+  .snq_entry_lfb_bypass_invalid_data_x   (snq_entry_lfb_bypass_invalid_data[2] ),
   .snq_entry_lfb_vb_req_hit_idx_x        (snq_entry_lfb_vb_req_hit_idx[2]      ),
   .snq_entry_vb_bypass_invalid_x         (snq_entry_vb_bypass_invalid[2]       ),
   .snq_entry_vb_bypass_readonce_x        (snq_entry_vb_bypass_readonce[2]      ),
@@ -1655,10 +1657,8 @@ ct_lsu_snoop_snq_entry  x_ct_lsu_snoop_snq_entry_3 (
   .snq_depd_remove                       (snq_depd_remove                      ),
   .snq_entry_bypass_db_id_v              (snq_entry_bypass_db_id_3             ),
   .snq_entry_depd_vb_id_v                (snq_entry_depd_vb_id_3               ),
-  .snq_entry_lfb_bypass_chg_tag_data0_x  (snq_entry_lfb_bypass_chg_tag_data0[3]),
-  .snq_entry_lfb_bypass_chg_tag_data1_x  (snq_entry_lfb_bypass_chg_tag_data1[3]),
-  .snq_entry_lfb_bypass_invalid_data0_x  (snq_entry_lfb_bypass_invalid_data0[3]),
-  .snq_entry_lfb_bypass_invalid_data1_x  (snq_entry_lfb_bypass_invalid_data1[3]),
+  .snq_entry_lfb_bypass_chg_tag_data_x   (snq_entry_lfb_bypass_chg_tag_data[3] ),
+  .snq_entry_lfb_bypass_invalid_data_x   (snq_entry_lfb_bypass_invalid_data[3] ),
   .snq_entry_lfb_vb_req_hit_idx_x        (snq_entry_lfb_vb_req_hit_idx[3]      ),
   .snq_entry_vb_bypass_invalid_x         (snq_entry_vb_bypass_invalid[3]       ),
   .snq_entry_vb_bypass_readonce_x        (snq_entry_vb_bypass_readonce[3]      ),
@@ -1722,10 +1722,8 @@ ct_lsu_snoop_snq_entry  x_ct_lsu_snoop_snq_entry_4 (
   .snq_depd_remove                       (snq_depd_remove                      ),
   .snq_entry_bypass_db_id_v              (snq_entry_bypass_db_id_4             ),
   .snq_entry_depd_vb_id_v                (snq_entry_depd_vb_id_4               ),
-  .snq_entry_lfb_bypass_chg_tag_data0_x  (snq_entry_lfb_bypass_chg_tag_data0[4]),
-  .snq_entry_lfb_bypass_chg_tag_data1_x  (snq_entry_lfb_bypass_chg_tag_data1[4]),
-  .snq_entry_lfb_bypass_invalid_data0_x  (snq_entry_lfb_bypass_invalid_data0[4]),
-  .snq_entry_lfb_bypass_invalid_data1_x  (snq_entry_lfb_bypass_invalid_data1[4]),
+  .snq_entry_lfb_bypass_chg_tag_data_x   (snq_entry_lfb_bypass_chg_tag_data[4] ),
+  .snq_entry_lfb_bypass_invalid_data_x   (snq_entry_lfb_bypass_invalid_data[4] ),
   .snq_entry_lfb_vb_req_hit_idx_x        (snq_entry_lfb_vb_req_hit_idx[4]      ),
   .snq_entry_vb_bypass_invalid_x         (snq_entry_vb_bypass_invalid[4]       ),
   .snq_entry_vb_bypass_readonce_x        (snq_entry_vb_bypass_readonce[4]      ),
@@ -1789,10 +1787,8 @@ ct_lsu_snoop_snq_entry  x_ct_lsu_snoop_snq_entry_5 (
   .snq_depd_remove                       (snq_depd_remove                      ),
   .snq_entry_bypass_db_id_v              (snq_entry_bypass_db_id_5             ),
   .snq_entry_depd_vb_id_v                (snq_entry_depd_vb_id_5               ),
-  .snq_entry_lfb_bypass_chg_tag_data0_x  (snq_entry_lfb_bypass_chg_tag_data0[5]),
-  .snq_entry_lfb_bypass_chg_tag_data1_x  (snq_entry_lfb_bypass_chg_tag_data1[5]),
-  .snq_entry_lfb_bypass_invalid_data0_x  (snq_entry_lfb_bypass_invalid_data0[5]),
-  .snq_entry_lfb_bypass_invalid_data1_x  (snq_entry_lfb_bypass_invalid_data1[5]),
+  .snq_entry_lfb_bypass_chg_tag_data_x   (snq_entry_lfb_bypass_chg_tag_data[5] ),
+  .snq_entry_lfb_bypass_invalid_data_x   (snq_entry_lfb_bypass_invalid_data[5] ),
   .snq_entry_lfb_vb_req_hit_idx_x        (snq_entry_lfb_vb_req_hit_idx[5]      ),
   .snq_entry_vb_bypass_invalid_x         (snq_entry_vb_bypass_invalid[5]       ),
   .snq_entry_vb_bypass_readonce_x        (snq_entry_vb_bypass_readonce[5]      ),

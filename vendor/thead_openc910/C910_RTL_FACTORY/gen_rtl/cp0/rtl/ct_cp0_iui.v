@@ -1321,7 +1321,9 @@ assign iui_hs_inv = 1'b0;
 
 // s-mode access m-mode csr or inst
 assign iui_s_inv  = iui_s_mode  
-                && (iui_inst_csr && iui_addr[9:8] == 2'b11
+                && (iui_inst_csr && (iui_addr[9:8] == 2'b11) &&
+                    ((iui_addr[11:10] != 2'b01) && 
+                     (iui_addr[7:0] != 8'b1100_0010)) // exclude MCOR here, allow MCOR to be writen in S mode
                     || iui_inst_mret
                     || iui_inst_sret && regs_iui_tsr
                     || iui_inst_wfi && regs_iui_tw

@@ -38,6 +38,7 @@ module ct_lsu_lfb_data_entry(
   lfb_data_entry_lf_sm_req_x,
   lfb_data_entry_vld_x,
   lfb_data_entry_wait_surplus_x,
+  lfb_data_entry_r_id_hit_x,
   lfb_first_pass_ptr,
   lfb_lf_sm_data_grnt_x,
   lfb_lf_sm_data_pop_req_x,
@@ -82,6 +83,7 @@ output           lfb_data_entry_last_x;
 output           lfb_data_entry_lf_sm_req_x;        
 output           lfb_data_entry_vld_x;              
 output           lfb_data_entry_wait_surplus_x;     
+output           lfb_data_entry_r_id_hit_x; // to indicate if the r id is match the exist data entry, for r data interleave
 
 // &Regs; @29
 reg     [7  :0]  lfb_data_entry_addr_id;            
@@ -152,6 +154,7 @@ wire             lfb_data_entry_r_id_hit;
 wire             lfb_data_entry_vld_x;              
 wire             lfb_data_entry_wait_surplus;       
 wire             lfb_data_entry_wait_surplus_x;     
+wire             lfb_data_entry_r_id_hit_x;
 wire    [3  :0]  lfb_first_pass_ptr;                
 wire             lfb_lf_sm_data_grnt;               
 wire             lfb_lf_sm_data_grnt_x;             
@@ -561,6 +564,7 @@ assign lfb_data_entry_data_v[511:0]   = lfb_data_entry_data[511:0];
 assign lfb_data_entry_last_x          = lfb_data_entry_last;
 assign lfb_data_entry_wait_surplus_x  = lfb_data_entry_wait_surplus;
 assign lfb_data_entry_full_x          = lfb_data_entry_full;
+assign lfb_data_entry_r_id_hit_x      = lfb_data_entry_r_id_hit;
 //-----------request--------------------
 assign lfb_data_entry_addr_pop_req_v[LFB_ADDR_ENTRY-1:0]  = lfb_data_entry_addr_pop_req[LFB_ADDR_ENTRY-1:0];
 assign lfb_data_entry_lf_sm_req_x   = lfb_data_entry_lf_sm_req;

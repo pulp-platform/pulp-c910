@@ -1,0 +1,72 @@
+From 19cf9daa127dd96d8f1beb90df450110418c1830 Mon Sep 17 00:00:00 2001
+From: Zexin Fu <zexifu@iis.ee.ethz.ch>
+Date: Wed, 30 Apr 2025 21:39:59 +0200
+Subject: [PATCH 13/24] Rename some modules in c910, as there are modules with
+ the same names in cheshire.
+
+---
+ smart_run/logical/apb/apb.v                           | 2 +-
+ smart_run/logical/axi/{axi_fifo.v => axi_fifo_c910.v} | 2 +-
+ smart_run/logical/common/soc.v                        | 2 +-
+ smart_run/logical/gpio/gpio.v                         | 2 +-
+ 4 files changed, 4 insertions(+), 4 deletions(-)
+ rename smart_run/logical/axi/{axi_fifo.v => axi_fifo_c910.v} (99%)
+
+diff --git a/smart_run/logical/apb/apb.v b/smart_run/logical/apb/apb.v
+index 752f75a..9f97e6e 100644
+--- a/smart_run/logical/apb/apb.v
++++ b/smart_run/logical/apb/apb.v
+@@ -237,7 +237,7 @@ timer  x_timer (
+ );
+ 
+ 
+-gpio  x_gpio (
++gpio_c910  x_gpio (
+   .b_pad_gpio_porta  (b_pad_gpio_porta ),
+   .gpio_intr         (gpio_intc_int    ),
+   .paddr             (apb_xx_paddr[6:2]),
+diff --git a/smart_run/logical/axi/axi_fifo.v b/smart_run/logical/axi/axi_fifo_c910.v
+similarity index 99%
+rename from smart_run/logical/axi/axi_fifo.v
+rename to smart_run/logical/axi/axi_fifo_c910.v
+index 4e46e24..4fcff5f 100644
+--- a/smart_run/logical/axi/axi_fifo.v
++++ b/smart_run/logical/axi/axi_fifo_c910.v
+@@ -32,7 +32,7 @@ limitations under the License.
+ 
+ 
+ 
+-module axi_fifo(
++module axi_fifo_c910(
+   biu_pad_araddr,
+   biu_pad_arburst,
+   biu_pad_arcache,
+diff --git a/smart_run/logical/common/soc.v b/smart_run/logical/common/soc.v
+index 4fa01f9..b274d2b 100644
+--- a/smart_run/logical/common/soc.v
++++ b/smart_run/logical/common/soc.v
+@@ -407,7 +407,7 @@ axi_interconnect128  x_axi_interconnect (
+   .wvalid_s3        (wvalid_s3       )
+ );
+ 
+-axi_fifo  x_axi_fifo (
++axi_fifo_c910  x_axi_fifo (
+   .biu_pad_araddr   (biu_pad_araddr  ),
+   .biu_pad_arburst  (biu_pad_arburst ),
+   .biu_pad_arcache  (biu_pad_arcache ),
+diff --git a/smart_run/logical/gpio/gpio.v b/smart_run/logical/gpio/gpio.v
+index e83908b..fb9a116 100644
+--- a/smart_run/logical/gpio/gpio.v
++++ b/smart_run/logical/gpio/gpio.v
+@@ -34,7 +34,7 @@ limitations under the License.
+ 
+ 
+ 
+-module gpio(
++module gpio_c910(
+   b_pad_gpio_porta,
+   gpio_intr,
+   paddr,
+-- 
+2.39.3
+
