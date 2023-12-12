@@ -32,7 +32,7 @@ limitations under the License.
 
 
 
-module axi_fifo(
+module axi_fifo_c910(
   biu_pad_araddr,
   biu_pad_arburst,
   biu_pad_arcache,

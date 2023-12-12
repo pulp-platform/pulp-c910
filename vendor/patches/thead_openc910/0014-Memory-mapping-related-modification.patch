@@ -1,0 +1,124 @@
+From d45da1df2dcad4716e56c7ad87047e070c239c1a Mon Sep 17 00:00:00 2001
+From: Zexin Fu <zexifu@iis.ee.ethz.ch>
+Date: Wed, 30 Apr 2025 21:59:53 +0200
+Subject: [PATCH 14/24] Memory mapping related modification:
+
+1. sysmap.h: Modify the system address attributes of c910;
+2. ct_mmu_sysmap.v: Recover the original memory attribute for default memory space, or the strong ordering attribute can cause an instruction access fault exception when fetch from the memory space;
+3. ct_cp0_regs.v: Change default value of t-head defined csr maee to 0, so that the pma info comes from sysmap.h, and we don't have to modify linux kernel to implement t-head defined pte extension. (According to t-head user manual: In all cases where virtual and physical address translation is done: With non-machine mode permissions and the MMU turned on, the page attributes of the address are configured in two ways: sysmap.h and the C910 extended page attributes in the pte, depending on the C910 extension Whether the maee bit in register mxstatus is turned on. If maee is turned on, the page attributes of the address are determined by the page attributes of the extension in the corresponding pte. If maee is turned off, the page attributes of the address are determined by sysmap.h).
+---
+ .../gen_rtl/cp0/rtl/ct_cp0_regs.v             |  2 +-
+ .../gen_rtl/mmu/rtl/ct_mmu_sysmap.v           |  4 +-
+ C910_RTL_FACTORY/gen_rtl/mmu/rtl/sysmap.h     | 65 +++++++------------
+ 3 files changed, 26 insertions(+), 45 deletions(-)
+
+diff --git a/C910_RTL_FACTORY/gen_rtl/cp0/rtl/ct_cp0_regs.v b/C910_RTL_FACTORY/gen_rtl/cp0/rtl/ct_cp0_regs.v
+index 89c045b..fac4748 100644
+--- a/C910_RTL_FACTORY/gen_rtl/cp0/rtl/ct_cp0_regs.v
++++ b/C910_RTL_FACTORY/gen_rtl/cp0/rtl/ct_cp0_regs.v
+@@ -2726,7 +2726,7 @@ begin
+   if (!cpurst_b)
+   begin
+     cskyisaee <= 1'b1;
+-    maee      <= 1'b1;
++    maee      <= 1'b0;
+     insde     <= 1'b0;
+     mhrd      <= 1'b0;
+     clintee   <= 1'b1;
+diff --git a/C910_RTL_FACTORY/gen_rtl/mmu/rtl/ct_mmu_sysmap.v b/C910_RTL_FACTORY/gen_rtl/mmu/rtl/ct_mmu_sysmap.v
+index 99b7a4f..0686dc7 100644
+--- a/C910_RTL_FACTORY/gen_rtl/mmu/rtl/ct_mmu_sysmap.v
++++ b/C910_RTL_FACTORY/gen_rtl/mmu/rtl/ct_mmu_sysmap.v
+@@ -181,8 +181,8 @@ begin
+     8'b00100000  : sysmap_mmu_flg_y[FLG_WIDTH-1:0] = `SYSMAP_FLG5;
+     8'b01000000  : sysmap_mmu_flg_y[FLG_WIDTH-1:0] = `SYSMAP_FLG6;
+     8'b10000000  : sysmap_mmu_flg_y[FLG_WIDTH-1:0] = `SYSMAP_FLG7;
+-    //default      : sysmap_mmu_flg_y[FLG_WIDTH-1:0] = 5'b01111;
+-    default      : sysmap_mmu_flg_y[FLG_WIDTH-1:0] = 5'b10011;
++    default      : sysmap_mmu_flg_y[FLG_WIDTH-1:0] = 5'b01111;
++    // default      : sysmap_mmu_flg_y[FLG_WIDTH-1:0] = 5'b10011;
+ endcase
+ // &CombEnd; @90
+ end
+diff --git a/C910_RTL_FACTORY/gen_rtl/mmu/rtl/sysmap.h b/C910_RTL_FACTORY/gen_rtl/mmu/rtl/sysmap.h
+index 9564624..910af2e 100644
+--- a/C910_RTL_FACTORY/gen_rtl/mmu/rtl/sysmap.h
++++ b/C910_RTL_FACTORY/gen_rtl/mmu/rtl/sysmap.h
+@@ -1,51 +1,32 @@
+ 
+-`ifdef FPGA 
+-`define SYSMAP_BASE_ADDR0  28'h01000
+-`define SYSMAP_FLG0        5'b01111
++// 256K periphs @ AXI: Debug ROM
++`define SYSMAP_BASE_ADDR0  28'h1000
++`define SYSMAP_FLG0        5'b00111
+ 
+-`define SYSMAP_BASE_ADDR1  28'h02000
++// 4K periphs @ AXI: AXI DMA (Cfg)
++`define SYSMAP_BASE_ADDR1  28'h2000
+ `define SYSMAP_FLG1        5'b10000
+ 
+-`define SYSMAP_BASE_ADDR2  28'hd0000
+-`define SYSMAP_FLG2        5'b10000
++// 256K periphs @ Reg: Boot ROM
++`define SYSMAP_BASE_ADDR2  28'h2040
++`define SYSMAP_FLG2        5'b01111
+ 
+-`define SYSMAP_BASE_ADDR3  28'heffff
+-`define SYSMAP_FLG3        5'b01101
++// 256K periphs @ Reg: CLINT, IRQ router, AXI RT (Cfg)
++`define SYSMAP_BASE_ADDR3  28'h3000
++`define SYSMAP_FLG3        5'b10000
+ 
+-`define SYSMAP_BASE_ADDR4  28'hfffff
+-`define SYSMAP_FLG4        5'b01111
++// 4K periphs @ Reg: SoC Regs, LLC (Cfg), UART, I2C, SPI Host, GPIO, Serial Link (Cfg), VGA (Cfg), UNBENT
++`define SYSMAP_BASE_ADDR4  28'h4000
++`define SYSMAP_FLG4        5'b10000
+ 
+-`define SYSMAP_BASE_ADDR5  28'h4000000
+-`define SYSMAP_FLG5        5'b01111
++// INTCs @ Reg: PLIC, CLICs
++`define SYSMAP_BASE_ADDR5  28'h1_0000
++`define SYSMAP_FLG5        5'b10000
+ 
+-`define SYSMAP_BASE_ADDR6  28'h5000000 
+-`define SYSMAP_FLG6        5'b10000
+-
+-`define SYSMAP_BASE_ADDR7  28'hfffffff 
+-`define SYSMAP_FLG7        5'b01111
+-`else
+-`define SYSMAP_BASE_ADDR0  28'h01000
+-`define SYSMAP_FLG0        5'b01111
+-
+-`define SYSMAP_BASE_ADDR1  28'h02000
+-`define SYSMAP_FLG1        5'b10000
+-
+-`define SYSMAP_BASE_ADDR2  28'hd0000
+-`define SYSMAP_FLG2        5'b10000
+-
+-`define SYSMAP_BASE_ADDR3  28'heffff
+-`define SYSMAP_FLG3        5'b01101
+-
+-`define SYSMAP_BASE_ADDR4  28'hfffff
+-`define SYSMAP_FLG4        5'b01111
+-
+-`define SYSMAP_BASE_ADDR5  28'h4000000
+-`define SYSMAP_FLG5        5'b01111
+-
+-`define SYSMAP_BASE_ADDR6  28'h5000000 
+-`define SYSMAP_FLG6        5'b10000
+-
+-`define SYSMAP_BASE_ADDR7  28'hfffffff 
+-`define SYSMAP_FLG7        5'b01111
+-`endif
++// LLC SPM @ AXI: cached
++`define SYSMAP_BASE_ADDR6  28'h1_4000 
++`define SYSMAP_FLG6        5'b01111
+ 
++// LLC SPM @ AXI: uncached
++`define SYSMAP_BASE_ADDR7  28'h1_8000
++`define SYSMAP_FLG7        5'b00111
+-- 
+2.39.3
+

@@ -1,0 +1,28 @@
+From e2284c15fab05405877ce1f8e3175792bedf860a Mon Sep 17 00:00:00 2001
+From: Zexin Fu <zexifu@iis.ee.ethz.ch>
+Date: Wed, 30 Apr 2025 23:31:29 +0200
+Subject: [PATCH 21/24] Fix for r interleave: make sure only the not_full
+ signal from the data entry with the same r id with the incoming r can affect
+ the output ready signal.
+
+---
+ C910_RTL_FACTORY/gen_rtl/lsu/rtl/ct_lsu_lfb.v | 3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/C910_RTL_FACTORY/gen_rtl/lsu/rtl/ct_lsu_lfb.v b/C910_RTL_FACTORY/gen_rtl/lsu/rtl/ct_lsu_lfb.v
+index 49af6b8..7882aad 100644
+--- a/C910_RTL_FACTORY/gen_rtl/lsu/rtl/ct_lsu_lfb.v
++++ b/C910_RTL_FACTORY/gen_rtl/lsu/rtl/ct_lsu_lfb.v
+@@ -1867,7 +1867,8 @@ assign lfb_snq_bypass_data_id[1:0] = lfb_data_entry_vld[LFB_DATA_ENTRY-1:0]
+                                         lfb_addr_entry_snq_bypass_hit[LFB_ADDR_ENTRY-1:0] == lfb_data_entry_addr_id_0[LFB_ADDR_ENTRY-1:0]};
+ assign lfb_snq_bypass_share        = |(lfb_snq_bypass_data_id[1:0] & lfb_data_entry_dcache_share[1:0]);
+ //----------------interface to biu--------------------------
+-assign lfb_data_not_full        = !(&lfb_data_entry_full[LFB_DATA_ENTRY-1:0]);
++ // make sure only the not_full signal from the data entry with the same r id with the incoming r can affect the output ready signal
++assign lfb_data_not_full        = |((~lfb_data_entry_full[LFB_DATA_ENTRY-1:0] & lfb_data_entry_r_id_hit[LFB_DATA_ENTRY-1:0]) | ~lfb_data_entry_vld[LFB_DATA_ENTRY-1:0]);
+ assign lsu_biu_r_linefill_ready = lfb_data_not_full || lfb_addr_all_resp;
+ //------------------full/empty signal-----------------------
+ assign lfb_addr_empty           = !(|lfb_addr_entry_vld[LFB_ADDR_ENTRY-1:0]);
+-- 
+2.39.3
+

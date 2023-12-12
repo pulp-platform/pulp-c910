@@ -1,0 +1,63 @@
+From edef2d6f97a83e77b63c0dd152172b51aded9a01 Mon Sep 17 00:00:00 2001
+From: Zexin Fu <zexifu@iis.ee.ethz.ch>
+Date: Wed, 30 Apr 2025 21:13:27 +0200
+Subject: [PATCH 12/24] Change c910 internal apb bus address (unused) and core
+ restart pc (to bootrom).
+
+---
+ smart_run/logical/common/cpu_sub_system_axi.v | 4 ++--
+ smart_run/logical/tb/tb.v                     | 2 +-
+ smart_run/logical/tb/tb_verilator.v           | 2 +-
+ 3 files changed, 4 insertions(+), 4 deletions(-)
+
+diff --git a/smart_run/logical/common/cpu_sub_system_axi.v b/smart_run/logical/common/cpu_sub_system_axi.v
+index c8c198c..153f480 100644
+--- a/smart_run/logical/common/cpu_sub_system_axi.v
++++ b/smart_run/logical/common/cpu_sub_system_axi.v
+@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
+ limitations under the License.
+ */
+ 
+-`define APB_BASE_ADDR 40'hb0000000
++`define APB_BASE_ADDR 40'h00000000
+ 
+ `include "cpu_cfig.h"
+ 
+@@ -248,7 +248,7 @@ rv_integration_platform  x_rv_integration_platform (
+     .pad_cpu_apb_base                             (`APB_BASE_ADDR                           ),
+     .pad_cpu_l2cache_flush_req                    (1'b0                                     ),
+     .pad_cpu_rst_b                                (pad_cpu_rst_b                            ),
+-    .pad_core0_rvba                               (40'b0                                    ), // Reset vector base address
++    .pad_core0_rvba                               (40'h2000000                                    ), // Reset vector base address
+     .pad_cpu_sys_cnt                              (pad_cpu_sys_cnt                          ),
+     .pad_had_jtg_tclk                             (pad_had_jtg_tclk                         ),
+     .pad_had_jtg_tdi                              (pad_had_jtg_tdi                          ),
+diff --git a/smart_run/logical/tb/tb.v b/smart_run/logical/tb/tb.v
+index c008a57..fcbf3ad 100644
+--- a/smart_run/logical/tb/tb.v
++++ b/smart_run/logical/tb/tb.v
+@@ -54,7 +54,7 @@ import uvm_pkg::*;
+ `define CP0_RSLT            `CPU_TOP.x_ct_top_0.x_ct_core.x_ct_cp0_top.x_ct_cp0_iui.cp0_iu_ex3_rslt_data[63:0]
+ 
+ // `define APB_BASE_ADDR       40'h4000000000
+-`define APB_BASE_ADDR       40'hb0000000
++`define APB_BASE_ADDR       40'h00000000
+ 
+ module tb();
+   import "DPI-C" function read_elf(input string filename);
+diff --git a/smart_run/logical/tb/tb_verilator.v b/smart_run/logical/tb/tb_verilator.v
+index b946274..ae93871 100644
+--- a/smart_run/logical/tb/tb_verilator.v
++++ b/smart_run/logical/tb/tb_verilator.v
+@@ -52,7 +52,7 @@ limitations under the License.
+ `define CP0_RSLT            `CPU_TOP.x_ct_top_0.x_ct_core.x_ct_cp0_top.x_ct_cp0_iui.cp0_iu_ex3_rslt_data[63:0]
+ 
+ // `define APB_BASE_ADDR       40'h4000000000
+-`define APB_BASE_ADDR       40'hb0000000
++`define APB_BASE_ADDR 40'h00000000
+ 
+ module top(
+   input wire clk
+-- 
+2.39.3
+

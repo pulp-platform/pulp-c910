@@ -618,6 +618,11 @@ parameter BYTE        = 2'b00,
           HALF        = 2'b01,
           WORD        = 2'b10,
           DWORD       = 2'b11;
+
+parameter BIU_R_NC_ID         = 5'd24,
+          BIU_R_SO_ID         = 5'd29,
+          BIU_R_NC_ATOM_ID    = 5'd30,
+          BIU_R_SYNC_FENCE_ID = 5'd31;
 //==========================================================
 //                 Instance of Gated Cell  
 //==========================================================
@@ -1238,7 +1243,11 @@ assign rb_entry_biu_req         = rb_entry_state[3:0]  ==  REQ_BIU;
 assign rb_entry_r_id_hit    = biu_lsu_r_vld
                               &&  (rb_entry_biu_id[4:0]  ==  biu_lsu_r_id[4:0]);
 assign rb_entry_b_id_hit    = biu_lsu_b_vld
-                              &&  (rb_entry_biu_id[4:0]  ==  biu_lsu_b_id[4:0]);
+                              &&  ((rb_entry_biu_id[4:0]  ==  biu_lsu_b_id[4:0]) ||
+                                    // Add this condition for corner case: aw send fast and get b resp,
+                                    // while the ar haven't sent out and the rb_entry_biu_id hasn't get updated:
+                                   ((biu_lsu_b_id[4:0]  ==  BIU_R_SYNC_FENCE_ID) && rb_entry_sync_fence)
+                                  );
 
 //-----------biu response signal--------
 assign rb_entry_biu_r_resp_set  = rb_entry_r_id_hit

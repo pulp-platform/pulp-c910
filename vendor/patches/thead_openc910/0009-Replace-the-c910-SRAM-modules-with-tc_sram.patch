@@ -1,0 +1,492 @@
+From d1f631f468c33f5e4f1f607357b62be27daeee37 Mon Sep 17 00:00:00 2001
+From: Zexin Fu <zexifu@iis.ee.ethz.ch>
+Date: Wed, 30 Apr 2025 17:32:53 +0200
+Subject: [PATCH 09/24] Replace the c910 SRAM modules with tc_sram.
+
+---
+ .../gen_rtl/ifu/rtl/ct_spsram_1024x64.v       | 25 +++++++++++++------
+ .../gen_rtl/ifu/rtl/ct_spsram_128x16.v        | 25 +++++++++++++------
+ .../gen_rtl/ifu/rtl/ct_spsram_2048x32_split.v | 25 +++++++++++++------
+ .../gen_rtl/ifu/rtl/ct_spsram_256x23.v        | 25 +++++++++++++------
+ .../gen_rtl/ifu/rtl/ct_spsram_512x22.v        | 25 +++++++++++++------
+ .../gen_rtl/ifu/rtl/ct_spsram_512x44.v        | 25 +++++++++++++------
+ .../gen_rtl/ifu/rtl/ct_spsram_512x59.v        | 25 +++++++++++++------
+ .../gen_rtl/lsu/rtl/ct_spsram_2048x32.v       | 25 +++++++++++++------
+ .../gen_rtl/lsu/rtl/ct_spsram_512x52.v        | 25 +++++++++++++------
+ .../gen_rtl/lsu/rtl/ct_spsram_512x54.v        | 25 +++++++++++++------
+ .../gen_rtl/lsu/rtl/ct_spsram_512x7.v         | 25 +++++++++++++------
+ .../gen_rtl/mmu/rtl/ct_spsram_256x196.v       | 25 +++++++++++++------
+ .../gen_rtl/mmu/rtl/ct_spsram_256x84.v        | 25 +++++++++++++------
+ 13 files changed, 221 insertions(+), 104 deletions(-)
+
+diff --git a/C910_RTL_FACTORY/gen_rtl/ifu/rtl/ct_spsram_1024x64.v b/C910_RTL_FACTORY/gen_rtl/ifu/rtl/ct_spsram_1024x64.v
+index 3a06ade..415de4e 100644
+--- a/C910_RTL_FACTORY/gen_rtl/ifu/rtl/ct_spsram_1024x64.v
++++ b/C910_RTL_FACTORY/gen_rtl/ifu/rtl/ct_spsram_1024x64.v
+@@ -65,14 +65,23 @@ parameter WE_WIDTH   = 64;
+   // WEN[31:30],WEN[29:28],WEN[27:26],WEN[25:24],WEN[23:22],WEN[21:20],WEN[19:18],WEN[17:16],
+   // WEN[15:14],WEN[13:12],WEN[11:10],WEN[ 9: 8],WEN[ 7: 6],WEN[ 5: 4],WEN[ 3: 2],WEN[ 1: 0]}
+ //   &Instance("ct_f_spsram_1024x64"); @47
+-ct_f_spsram_1024x64  x_ct_f_spsram_1024x64 (
+-  .A    (A   ),
+-  .CEN  (CEN ),
+-  .CLK  (CLK ),
+-  .D    (D   ),
+-  .GWEN (GWEN),
+-  .Q    (Q   ),
+-  .WEN  (WEN )
++tc_sram #(
++  .NumWords   ( 1<<ADDR_WIDTH         ),
++  .DataWidth  ( DATA_WIDTH            ),
++  .ByteWidth  ( DATA_WIDTH/DATA_WIDTH ),
++  .NumPorts   ( 32'd1 ),
++  .Latency    ( 32'd1 ),
++  .SimInit    ( "none"),
++  .PrintSimCfg( 0     )
++) i_tc_sram (
++    .clk_i    ( CLK   ),
++    .rst_ni   ( 1'b1  ),
++    .req_i    ( ~CEN  ),
++    .we_i     ( ~GWEN ),
++    .be_i     ( ~WEN  ),
++    .wdata_i  ( D     ),
++    .addr_i   ( A     ),
++    .rdata_o  ( Q     )
+ );
+ 
+ //   &Instance("ct_tsmc_spsram_1024x64"); @53
+diff --git a/C910_RTL_FACTORY/gen_rtl/ifu/rtl/ct_spsram_128x16.v b/C910_RTL_FACTORY/gen_rtl/ifu/rtl/ct_spsram_128x16.v
+index c3d4f63..6e30f9f 100644
+--- a/C910_RTL_FACTORY/gen_rtl/ifu/rtl/ct_spsram_128x16.v
++++ b/C910_RTL_FACTORY/gen_rtl/ifu/rtl/ct_spsram_128x16.v
+@@ -63,14 +63,23 @@ parameter WE_WIDTH   = 16;
+   //{WEN[15:14],WEN[13:12],WEN[11:10],WEN[ 9: 8],
+   // WEN[ 7: 6],WEN[ 5: 4],WEN[ 3: 2],WEN[ 1: 0]}
+ //   &Instance("ct_f_spsram_128x16"); @45
+-ct_f_spsram_128x16  x_ct_f_spsram_128x16 (
+-  .A    (A   ),
+-  .CEN  (CEN ),
+-  .CLK  (CLK ),
+-  .D    (D   ),
+-  .GWEN (GWEN),
+-  .Q    (Q   ),
+-  .WEN  (WEN )
++tc_sram #(
++  .NumWords   ( 1<<ADDR_WIDTH         ),
++  .DataWidth  ( DATA_WIDTH            ),
++  .ByteWidth  ( DATA_WIDTH/DATA_WIDTH ),
++  .NumPorts   ( 32'd1 ),
++  .Latency    ( 32'd1 ),
++  .SimInit    ( "none"),
++  .PrintSimCfg( 0     )
++) i_tc_sram (
++    .clk_i    ( CLK   ),
++    .rst_ni   ( 1'b1  ),
++    .req_i    ( ~CEN  ),
++    .we_i     ( ~GWEN ),
++    .be_i     ( ~WEN  ),
++    .wdata_i  ( D     ),
++    .addr_i   ( A     ),
++    .rdata_o  ( Q     )
+ );
+ 
+ //   &Instance("ct_tsmc_spsram_128x16"); @51
+diff --git a/C910_RTL_FACTORY/gen_rtl/ifu/rtl/ct_spsram_2048x32_split.v b/C910_RTL_FACTORY/gen_rtl/ifu/rtl/ct_spsram_2048x32_split.v
+index d832038..da897ac 100644
+--- a/C910_RTL_FACTORY/gen_rtl/ifu/rtl/ct_spsram_2048x32_split.v
++++ b/C910_RTL_FACTORY/gen_rtl/ifu/rtl/ct_spsram_2048x32_split.v
+@@ -62,14 +62,23 @@ parameter WE_WIDTH   = 32;
+   //********************************************************
+   //{WEN[31:24],WEN[23:16],WEN[15:8],WEN[7:0]}
+ //   &Instance("ct_f_spsram_2048x32"); @44
+-ct_f_spsram_2048x32  x_ct_f_spsram_2048x32 (
+-  .A    (A   ),
+-  .CEN  (CEN ),
+-  .CLK  (CLK ),
+-  .D    (D   ),
+-  .GWEN (GWEN),
+-  .Q    (Q   ),
+-  .WEN  (WEN )
++tc_sram #(
++  .NumWords   ( 1<<ADDR_WIDTH         ),
++  .DataWidth  ( DATA_WIDTH            ),
++  .ByteWidth  ( DATA_WIDTH/DATA_WIDTH ),
++  .NumPorts   ( 32'd1 ),
++  .Latency    ( 32'd1 ),
++  .SimInit    ( "none"),
++  .PrintSimCfg( 0     )
++) i_tc_sram (
++    .clk_i    ( CLK   ),
++    .rst_ni   ( 1'b1  ),
++    .req_i    ( ~CEN  ),
++    .we_i     ( ~GWEN ),
++    .be_i     ( ~WEN  ),
++    .wdata_i  ( D     ),
++    .addr_i   ( A     ),
++    .rdata_o  ( Q     )
+ );
+ 
+ //   &Instance("ct_tsmc_spsram_2048x32_split"); @50
+diff --git a/C910_RTL_FACTORY/gen_rtl/ifu/rtl/ct_spsram_256x23.v b/C910_RTL_FACTORY/gen_rtl/ifu/rtl/ct_spsram_256x23.v
+index 3c5d7f3..41f8ad1 100644
+--- a/C910_RTL_FACTORY/gen_rtl/ifu/rtl/ct_spsram_256x23.v
++++ b/C910_RTL_FACTORY/gen_rtl/ifu/rtl/ct_spsram_256x23.v
+@@ -62,14 +62,23 @@ parameter WE_WIDTH   = 23;
+   //********************************************************
+   //{WEN[20:0]}
+ //   &Instance("ct_f_spsram_256x23"); @44
+-ct_f_spsram_256x23  x_ct_f_spsram_256x23 (
+-  .A    (A   ),
+-  .CEN  (CEN ),
+-  .CLK  (CLK ),
+-  .D    (D   ),
+-  .GWEN (GWEN),
+-  .Q    (Q   ),
+-  .WEN  (WEN )
++tc_sram #(
++  .NumWords   ( 1<<ADDR_WIDTH         ),
++  .DataWidth  ( DATA_WIDTH            ),
++  .ByteWidth  ( DATA_WIDTH/DATA_WIDTH ),
++  .NumPorts   ( 32'd1 ),
++  .Latency    ( 32'd1 ),
++  .SimInit    ( "none"),
++  .PrintSimCfg( 0     )
++) i_tc_sram (
++    .clk_i    ( CLK   ),
++    .rst_ni   ( 1'b1  ),
++    .req_i    ( ~CEN  ),
++    .we_i     ( ~GWEN ),
++    .be_i     ( ~WEN  ),
++    .wdata_i  ( D     ),
++    .addr_i   ( A     ),
++    .rdata_o  ( Q     )
+ );
+ 
+ //   &Instance("ct_tsmc_spsram_256x23"); @50
+diff --git a/C910_RTL_FACTORY/gen_rtl/ifu/rtl/ct_spsram_512x22.v b/C910_RTL_FACTORY/gen_rtl/ifu/rtl/ct_spsram_512x22.v
+index 76b544a..d1a681a 100644
+--- a/C910_RTL_FACTORY/gen_rtl/ifu/rtl/ct_spsram_512x22.v
++++ b/C910_RTL_FACTORY/gen_rtl/ifu/rtl/ct_spsram_512x22.v
+@@ -62,14 +62,23 @@ parameter WE_WIDTH   = 22;
+   //********************************************************
+   //{WEN[21:11],WEN[10:0]}
+ //   &Instance("ct_f_spsram_512x22"); @44
+-ct_f_spsram_512x22  x_ct_f_spsram_512x22 (
+-  .A    (A   ),
+-  .CEN  (CEN ),
+-  .CLK  (CLK ),
+-  .D    (D   ),
+-  .GWEN (GWEN),
+-  .Q    (Q   ),
+-  .WEN  (WEN )
++tc_sram #(
++  .NumWords   ( 1<<ADDR_WIDTH         ),
++  .DataWidth  ( DATA_WIDTH            ),
++  .ByteWidth  ( DATA_WIDTH/DATA_WIDTH ),
++  .NumPorts   ( 32'd1 ),
++  .Latency    ( 32'd1 ),
++  .SimInit    ( "none"),
++  .PrintSimCfg( 0     )
++) i_tc_sram (
++    .clk_i    ( CLK   ),
++    .rst_ni   ( 1'b1  ),
++    .req_i    ( ~CEN  ),
++    .we_i     ( ~GWEN ),
++    .be_i     ( ~WEN  ),
++    .wdata_i  ( D     ),
++    .addr_i   ( A     ),
++    .rdata_o  ( Q     )
+ );
+ 
+ //   &Instance("ct_tsmc_spsram_512x22"); @50
+diff --git a/C910_RTL_FACTORY/gen_rtl/ifu/rtl/ct_spsram_512x44.v b/C910_RTL_FACTORY/gen_rtl/ifu/rtl/ct_spsram_512x44.v
+index bfd90bd..9983b0e 100644
+--- a/C910_RTL_FACTORY/gen_rtl/ifu/rtl/ct_spsram_512x44.v
++++ b/C910_RTL_FACTORY/gen_rtl/ifu/rtl/ct_spsram_512x44.v
+@@ -62,14 +62,23 @@ parameter WE_WIDTH   = 44;
+   //********************************************************
+   //{WEN[43,22],WEN[21:0}}
+ //   &Instance("ct_f_spsram_512x44"); @44
+-ct_f_spsram_512x44  x_ct_f_spsram_512x44 (
+-  .A    (A   ),
+-  .CEN  (CEN ),
+-  .CLK  (CLK ),
+-  .D    (D   ),
+-  .GWEN (GWEN),
+-  .Q    (Q   ),
+-  .WEN  (WEN )
++tc_sram #(
++  .NumWords   ( 1<<ADDR_WIDTH         ),
++  .DataWidth  ( DATA_WIDTH            ),
++  .ByteWidth  ( DATA_WIDTH/DATA_WIDTH ),
++  .NumPorts   ( 32'd1 ),
++  .Latency    ( 32'd1 ),
++  .SimInit    ( "none"),
++  .PrintSimCfg( 0     )
++) i_tc_sram (
++    .clk_i    ( CLK   ),
++    .rst_ni   ( 1'b1  ),
++    .req_i    ( ~CEN  ),
++    .we_i     ( ~GWEN ),
++    .be_i     ( ~WEN  ),
++    .wdata_i  ( D     ),
++    .addr_i   ( A     ),
++    .rdata_o  ( Q     )
+ );
+ 
+ //   &Instance("ct_tsmc_spsram_512x44"); @50
+diff --git a/C910_RTL_FACTORY/gen_rtl/ifu/rtl/ct_spsram_512x59.v b/C910_RTL_FACTORY/gen_rtl/ifu/rtl/ct_spsram_512x59.v
+index f809174..a4960df 100644
+--- a/C910_RTL_FACTORY/gen_rtl/ifu/rtl/ct_spsram_512x59.v
++++ b/C910_RTL_FACTORY/gen_rtl/ifu/rtl/ct_spsram_512x59.v
+@@ -62,14 +62,23 @@ parameter WE_WIDTH   = 59;
+   //********************************************************
+   //{WEN[58],WEN[57:29],WEN[28:0]}
+ //   &Instance("ct_f_spsram_512x59"); @44
+-ct_f_spsram_512x59  x_ct_f_spsram_512x59 (
+-  .A    (A   ),
+-  .CEN  (CEN ),
+-  .CLK  (CLK ),
+-  .D    (D   ),
+-  .GWEN (GWEN),
+-  .Q    (Q   ),
+-  .WEN  (WEN )
++tc_sram #(
++  .NumWords   ( 1<<ADDR_WIDTH         ),
++  .DataWidth  ( DATA_WIDTH            ),
++  .ByteWidth  ( DATA_WIDTH/DATA_WIDTH ),
++  .NumPorts   ( 32'd1 ),
++  .Latency    ( 32'd1 ),
++  .SimInit    ( "none"),
++  .PrintSimCfg( 0     )
++) i_tc_sram (
++    .clk_i    ( CLK   ),
++    .rst_ni   ( 1'b1  ),
++    .req_i    ( ~CEN  ),
++    .we_i     ( ~GWEN ),
++    .be_i     ( ~WEN  ),
++    .wdata_i  ( D     ),
++    .addr_i   ( A     ),
++    .rdata_o  ( Q     )
+ );
+ 
+ //   &Instance("ct_tsmc_spsram_512x59"); @50
+diff --git a/C910_RTL_FACTORY/gen_rtl/lsu/rtl/ct_spsram_2048x32.v b/C910_RTL_FACTORY/gen_rtl/lsu/rtl/ct_spsram_2048x32.v
+index 1e1199d..294a847 100644
+--- a/C910_RTL_FACTORY/gen_rtl/lsu/rtl/ct_spsram_2048x32.v
++++ b/C910_RTL_FACTORY/gen_rtl/lsu/rtl/ct_spsram_2048x32.v
+@@ -62,14 +62,23 @@ parameter WE_WIDTH   = 32;
+   //********************************************************
+   //{WEN[31:24],WEN[23:16],WEN[15:8],WEN[7:0]}
+ //   &Instance("ct_f_spsram_2048x32"); @44
+-ct_f_spsram_2048x32  x_ct_f_spsram_2048x32 (
+-  .A    (A   ),
+-  .CEN  (CEN ),
+-  .CLK  (CLK ),
+-  .D    (D   ),
+-  .GWEN (GWEN),
+-  .Q    (Q   ),
+-  .WEN  (WEN )
++tc_sram #(
++  .NumWords   ( 1<<ADDR_WIDTH         ),
++  .DataWidth  ( DATA_WIDTH            ),
++  .ByteWidth  ( DATA_WIDTH/DATA_WIDTH ),
++  .NumPorts   ( 32'd1 ),
++  .Latency    ( 32'd1 ),
++  .SimInit    ( "none"),
++  .PrintSimCfg( 0     )
++) i_tc_sram (
++    .clk_i    ( CLK   ),
++    .rst_ni   ( 1'b1  ),
++    .req_i    ( ~CEN  ),
++    .we_i     ( ~GWEN ),
++    .be_i     ( ~WEN  ),
++    .wdata_i  ( D     ),
++    .addr_i   ( A     ),
++    .rdata_o  ( Q     )
+ );
+ 
+ //   &Instance("ct_tsmc_spsram_2048x32"); @50
+diff --git a/C910_RTL_FACTORY/gen_rtl/lsu/rtl/ct_spsram_512x52.v b/C910_RTL_FACTORY/gen_rtl/lsu/rtl/ct_spsram_512x52.v
+index 7c888c7..b7dea38 100644
+--- a/C910_RTL_FACTORY/gen_rtl/lsu/rtl/ct_spsram_512x52.v
++++ b/C910_RTL_FACTORY/gen_rtl/lsu/rtl/ct_spsram_512x52.v
+@@ -62,14 +62,23 @@ parameter WE_WIDTH   = 52;
+   //********************************************************
+   //{WEN[35:18],WEN[17:0]}
+ //   &Instance("ct_f_spsram_512x52"); @44
+-ct_f_spsram_512x52  x_ct_f_spsram_512x52 (
+-  .A    (A   ),
+-  .CEN  (CEN ),
+-  .CLK  (CLK ),
+-  .D    (D   ),
+-  .GWEN (GWEN),
+-  .Q    (Q   ),
+-  .WEN  (WEN )
++tc_sram #(
++  .NumWords   ( 1<<ADDR_WIDTH         ),
++  .DataWidth  ( DATA_WIDTH            ),
++  .ByteWidth  ( DATA_WIDTH/DATA_WIDTH ),
++  .NumPorts   ( 32'd1 ),
++  .Latency    ( 32'd1 ),
++  .SimInit    ( "none"),
++  .PrintSimCfg( 0     )
++) i_tc_sram (
++    .clk_i    ( CLK   ),
++    .rst_ni   ( 1'b1  ),
++    .req_i    ( ~CEN  ),
++    .we_i     ( ~GWEN ),
++    .be_i     ( ~WEN  ),
++    .wdata_i  ( D     ),
++    .addr_i   ( A     ),
++    .rdata_o  ( Q     )
+ );
+ 
+ //   &Instance("ct_tsmc_spsram_512x52"); @50
+diff --git a/C910_RTL_FACTORY/gen_rtl/lsu/rtl/ct_spsram_512x54.v b/C910_RTL_FACTORY/gen_rtl/lsu/rtl/ct_spsram_512x54.v
+index 0307e49..4c687e9 100644
+--- a/C910_RTL_FACTORY/gen_rtl/lsu/rtl/ct_spsram_512x54.v
++++ b/C910_RTL_FACTORY/gen_rtl/lsu/rtl/ct_spsram_512x54.v
+@@ -62,14 +62,23 @@ parameter WE_WIDTH   = 54;
+   //********************************************************
+   //{WEN[37:19],WEN[18:0]}
+ //   &Instance("ct_f_spsram_512x54"); @44
+-ct_f_spsram_512x54  x_ct_f_spsram_512x54 (
+-  .A    (A   ),
+-  .CEN  (CEN ),
+-  .CLK  (CLK ),
+-  .D    (D   ),
+-  .GWEN (GWEN),
+-  .Q    (Q   ),
+-  .WEN  (WEN )
++tc_sram #(
++  .NumWords   ( 1<<ADDR_WIDTH         ),
++  .DataWidth  ( DATA_WIDTH            ),
++  .ByteWidth  ( DATA_WIDTH/DATA_WIDTH ),
++  .NumPorts   ( 32'd1 ),
++  .Latency    ( 32'd1 ),
++  .SimInit    ( "none"),
++  .PrintSimCfg( 0     )
++) i_tc_sram (
++    .clk_i    ( CLK   ),
++    .rst_ni   ( 1'b1  ),
++    .req_i    ( ~CEN  ),
++    .we_i     ( ~GWEN ),
++    .be_i     ( ~WEN  ),
++    .wdata_i  ( D     ),
++    .addr_i   ( A     ),
++    .rdata_o  ( Q     )
+ );
+ 
+ //   &Instance("ct_tsmc_spsram_512x54"); @50
+diff --git a/C910_RTL_FACTORY/gen_rtl/lsu/rtl/ct_spsram_512x7.v b/C910_RTL_FACTORY/gen_rtl/lsu/rtl/ct_spsram_512x7.v
+index 5c7179f..51bf662 100644
+--- a/C910_RTL_FACTORY/gen_rtl/lsu/rtl/ct_spsram_512x7.v
++++ b/C910_RTL_FACTORY/gen_rtl/lsu/rtl/ct_spsram_512x7.v
+@@ -62,14 +62,23 @@ parameter WE_WIDTH   = 7;
+   //********************************************************
+   //{WEN[6],WEN[5],WEN[4],WEN[3],WEN[2],WEN[1],WEN[0]}
+ //   &Instance("ct_f_spsram_512x7"); @44
+-ct_f_spsram_512x7  x_ct_f_spsram_512x7 (
+-  .A    (A   ),
+-  .CEN  (CEN ),
+-  .CLK  (CLK ),
+-  .D    (D   ),
+-  .GWEN (GWEN),
+-  .Q    (Q   ),
+-  .WEN  (WEN )
++tc_sram #(
++  .NumWords   ( 1<<ADDR_WIDTH         ),
++  .DataWidth  ( DATA_WIDTH            ),
++  .ByteWidth  ( DATA_WIDTH/DATA_WIDTH ),
++  .NumPorts   ( 32'd1 ),
++  .Latency    ( 32'd1 ),
++  .SimInit    ( "none"),
++  .PrintSimCfg( 0     )
++) i_tc_sram (
++    .clk_i    ( CLK   ),
++    .rst_ni   ( 1'b1  ),
++    .req_i    ( ~CEN  ),
++    .we_i     ( ~GWEN ),
++    .be_i     ( ~WEN  ),
++    .wdata_i  ( D     ),
++    .addr_i   ( A     ),
++    .rdata_o  ( Q     )
+ );
+ 
+ //   &Instance("ct_tsmc_spsram_512x7"); @50
+diff --git a/C910_RTL_FACTORY/gen_rtl/mmu/rtl/ct_spsram_256x196.v b/C910_RTL_FACTORY/gen_rtl/mmu/rtl/ct_spsram_256x196.v
+index 3640984..bfbf162 100644
+--- a/C910_RTL_FACTORY/gen_rtl/mmu/rtl/ct_spsram_256x196.v
++++ b/C910_RTL_FACTORY/gen_rtl/mmu/rtl/ct_spsram_256x196.v
+@@ -62,14 +62,23 @@ parameter WE_WIDTH   = 196;
+   //********************************************************
+   //{WEN[111:56],WEN[55:0]}
+ //   &Instance("ct_f_spsram_256x196"); @44
+-ct_f_spsram_256x196  x_ct_f_spsram_256x196 (
+-  .A    (A   ),
+-  .CEN  (CEN ),
+-  .CLK  (CLK ),
+-  .D    (D   ),
+-  .GWEN (GWEN),
+-  .Q    (Q   ),
+-  .WEN  (WEN )
++tc_sram #(
++  .NumWords   ( 1<<ADDR_WIDTH         ),
++  .DataWidth  ( DATA_WIDTH            ),
++  .ByteWidth  ( DATA_WIDTH/DATA_WIDTH ),
++  .NumPorts   ( 32'd1 ),
++  .Latency    ( 32'd1 ),
++  .SimInit    ( "none"),
++  .PrintSimCfg( 0     )
++) i_tc_sram (
++    .clk_i    ( CLK   ),
++    .rst_ni   ( 1'b1  ),
++    .req_i    ( ~CEN  ),
++    .we_i     ( ~GWEN ),
++    .be_i     ( ~WEN  ),
++    .wdata_i  ( D     ),
++    .addr_i   ( A     ),
++    .rdata_o  ( Q     )
+ );
+ 
+ //   &Instance("ct_tsmc_spsram_256x196"); @50
+diff --git a/C910_RTL_FACTORY/gen_rtl/mmu/rtl/ct_spsram_256x84.v b/C910_RTL_FACTORY/gen_rtl/mmu/rtl/ct_spsram_256x84.v
+index fb074da..143d022 100644
+--- a/C910_RTL_FACTORY/gen_rtl/mmu/rtl/ct_spsram_256x84.v
++++ b/C910_RTL_FACTORY/gen_rtl/mmu/rtl/ct_spsram_256x84.v
+@@ -62,14 +62,23 @@ parameter WE_WIDTH   = 84;
+   //********************************************************
+   //{WEN[135:132],WEN[131:99],WEN[98:66],WEN[65:33],WEN[32:0]}
+ //   &Instance("ct_f_spsram_256x84"); @44
+-ct_f_spsram_256x84  x_ct_f_spsram_256x84 (
+-  .A    (A   ),
+-  .CEN  (CEN ),
+-  .CLK  (CLK ),
+-  .D    (D   ),
+-  .GWEN (GWEN),
+-  .Q    (Q   ),
+-  .WEN  (WEN )
++tc_sram #(
++  .NumWords   ( 1<<ADDR_WIDTH         ),
++  .DataWidth  ( DATA_WIDTH            ),
++  .ByteWidth  ( DATA_WIDTH/DATA_WIDTH ),
++  .NumPorts   ( 32'd1 ),
++  .Latency    ( 32'd1 ),
++  .SimInit    ( "none"),
++  .PrintSimCfg( 0     )
++) i_tc_sram (
++    .clk_i    ( CLK   ),
++    .rst_ni   ( 1'b1  ),
++    .req_i    ( ~CEN  ),
++    .we_i     ( ~GWEN ),
++    .be_i     ( ~WEN  ),
++    .wdata_i  ( D     ),
++    .addr_i   ( A     ),
++    .rdata_o  ( Q     )
+ );
+ 
+ //   &Instance("ct_tsmc_spsram_256x84"); @50
+-- 
+2.39.3
+

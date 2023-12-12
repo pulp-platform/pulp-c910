@@ -237,7 +237,7 @@ timer  x_timer (
 );
 
 
-gpio  x_gpio (
+gpio_c910  x_gpio (
   .b_pad_gpio_porta  (b_pad_gpio_porta ),
   .gpio_intr         (gpio_intc_int    ),
   .paddr             (apb_xx_paddr[6:2]),

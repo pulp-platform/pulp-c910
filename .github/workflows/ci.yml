@@ -1,7 +1,8 @@
-
-# Copyright 2022 ETH Zurich and University of Bologna.
+# Copyright 2025 ETH Zurich and University of Bologna.
 # Licensed under the Apache License, Version 2.0, see LICENSE for details.
 # SPDX-License-Identifier: Apache-2.0
+
+# Author: Zexin Fu <zexifu@iis.ee.ethz.ch>
 
 # Run all ci checks
 name: ci
@@ -12,14 +13,10 @@ jobs:
   # Vendor Up-to-Date #
   #####################
   # Check that all vendored sources are up-to-date.
-  check-vendor:
-    name: Vendor Up-to-Date
+  bender-vendor-up-to-date:
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v2
-    - name: Install requirements
-      run: cargo install --git https://github.com/pulp-platform/bender.git
-    - name: Run bender vendor diff
-      run: |
-        cd hw/system
-        bender vendor diff --err_on_diff
+      - name: Check bender vendor up-to-date
+        uses: pulp-platform/pulp-actions/bender-vendor-up-to-date@v2.4.1 # update version as needed, not autoupdated
+        with:
+          bender-version: 0.27.1

@@ -15,7 +15,9 @@ limitations under the License.
 
 `include "cpu_cfig.h"
 
-module ct_lsu_snoop_snq_entry(
+module ct_lsu_snoop_snq_entry #(
+  parameter LFB_DATA_ENTRY = 8
+)(
   arb_snq_entry_oldest_index_x,
   biu_snq_cr_resp_acept_x,
   cp0_lsu_icg_en,
@@ -42,10 +44,8 @@ module ct_lsu_snoop_snq_entry(
   snq_depd_remove,
   snq_entry_bypass_db_id_v,
   snq_entry_depd_vb_id_v,
-  snq_entry_lfb_bypass_chg_tag_data0_x,
-  snq_entry_lfb_bypass_chg_tag_data1_x,
-  snq_entry_lfb_bypass_invalid_data0_x,
-  snq_entry_lfb_bypass_invalid_data1_x,
+  snq_entry_lfb_bypass_chg_tag_data_x,
+  snq_entry_lfb_bypass_invalid_data_x,
   snq_entry_lfb_vb_req_hit_idx_x,
   snq_entry_vb_bypass_invalid_x,
   snq_entry_vb_bypass_readonce_x,
@@ -89,7 +89,7 @@ input           dcache_snq_tag_resp_share;
 input           dcache_snq_tag_resp_valid;           
 input           dcache_snq_tag_resp_way;             
 input           lfb_bypass_vld_x;                    
-input   [1 :0]  lfb_snq_bypass_data_id;              
+input   [LFB_DATA_ENTRY-1 :0]  lfb_snq_bypass_data_id;              
 input           lfb_snq_bypass_share;                
 input   [33:0]  lfb_vb_addr_tto6;                    
 input           lsu_snoop_clk;                       
@@ -115,10 +115,8 @@ output          snpt_snpdt_start_x;
 output          snq_cr_resp_valid_x;                 
 output  [2 :0]  snq_entry_bypass_db_id_v;            
 output  [1 :0]  snq_entry_depd_vb_id_v;              
-output          snq_entry_lfb_bypass_chg_tag_data0_x; 
-output          snq_entry_lfb_bypass_chg_tag_data1_x; 
-output          snq_entry_lfb_bypass_invalid_data0_x; 
-output          snq_entry_lfb_bypass_invalid_data1_x; 
+output  [LFB_DATA_ENTRY-1 :0] snq_entry_lfb_bypass_chg_tag_data_x;            
+output  [LFB_DATA_ENTRY-1 :0] snq_entry_lfb_bypass_invalid_data_x;            
 output          snq_entry_lfb_vb_req_hit_idx_x;      
 output          snq_entry_vb_bypass_invalid_x;       
 output          snq_entry_vb_bypass_readonce_x;      
@@ -146,7 +144,7 @@ reg     [35:0]  snq_addr;
 reg     [9 :0]  snq_depd;                            
 reg     [2 :0]  snq_entry_bypass_db_id;              
 reg             snq_entry_bypass_dcache_share;       
-reg     [1 :0]  snq_entry_bypass_lfb_data_id;        
+reg     [LFB_DATA_ENTRY-1 :0]  snq_entry_bypass_lfb_data_id;        
 reg             snq_issued;                          
 reg             snq_need_chg_tag_ff;                 
 reg             snq_need_chg_tag_i_ff;               
@@ -181,14 +179,12 @@ wire            dcache_snq_tag_resp_way;
 wire            error;                               
 wire            is_shared;                           
 wire            lfb_bypass_chg_tag;                  
-wire            lfb_bypass_chg_tag_data0;            
-wire            lfb_bypass_chg_tag_data1;            
+wire    [LFB_DATA_ENTRY-1 :0] lfb_bypass_chg_tag_data;            
 wire            lfb_bypass_invalid;                  
-wire            lfb_bypass_invalid_data0;            
-wire            lfb_bypass_invalid_data1;            
+wire    [LFB_DATA_ENTRY-1 :0] lfb_bypass_invalid_data;            
 wire            lfb_bypass_vld;                      
 wire            lfb_bypass_vld_x;                    
-wire    [1 :0]  lfb_snq_bypass_data_id;              
+wire    [LFB_DATA_ENTRY-1 :0]  lfb_snq_bypass_data_id;              
 wire            lfb_snq_bypass_share;                
 wire    [33:0]  lfb_vb_addr_tto6;                    
 wire            lsu_snoop_clk;                       
@@ -219,10 +215,8 @@ wire    [39:0]  snq_entry_cmp_wmb_write_req_addr;
 wire    [1 :0]  snq_entry_depd_vb_id;                
 wire    [1 :0]  snq_entry_depd_vb_id_v;              
 wire    [39:0]  snq_entry_from_snq_create_addr;      
-wire            snq_entry_lfb_bypass_chg_tag_data0_x; 
-wire            snq_entry_lfb_bypass_chg_tag_data1_x; 
-wire            snq_entry_lfb_bypass_invalid_data0_x; 
-wire            snq_entry_lfb_bypass_invalid_data1_x; 
+wire    [LFB_DATA_ENTRY-1 :0] snq_entry_lfb_bypass_chg_tag_data_x;            
+wire    [LFB_DATA_ENTRY-1 :0] snq_entry_lfb_bypass_invalid_data_x;            
 wire            snq_entry_lfb_vb_req_hit_idx;        
 wire            snq_entry_lfb_vb_req_hit_idx_x;      
 wire            snq_entry_vb_bypass_invalid_x;       
@@ -392,12 +386,12 @@ assign vb_bypass_invalid = vb_bypass_mode
  begin
    if(~cpurst_b)
    begin
-     snq_entry_bypass_lfb_data_id[1:0] <= 2'b0;
+     snq_entry_bypass_lfb_data_id[LFB_DATA_ENTRY-1:0] <= {LFB_DATA_ENTRY{1'b0}};
      snq_entry_bypass_dcache_share     <= 1'b0;
    end
    else if(lfb_bypass_vld)
    begin
-     snq_entry_bypass_lfb_data_id[1:0] <= lfb_snq_bypass_data_id[1:0];
+     snq_entry_bypass_lfb_data_id[LFB_DATA_ENTRY-1:0] <= lfb_snq_bypass_data_id[LFB_DATA_ENTRY-1:0];
      snq_entry_bypass_dcache_share     <= lfb_snq_bypass_share;
    end
  end
@@ -414,11 +408,13 @@ assign lfb_bypass_chg_tag = lfb_bypass_mode
                             && snq_need_chg_tag_s_ff
                             && arb_snq_entry_oldest_index;
 
-assign lfb_bypass_invalid_data0 = lfb_bypass_invalid && snq_entry_bypass_lfb_data_id[0];
-assign lfb_bypass_invalid_data1 = lfb_bypass_invalid && snq_entry_bypass_lfb_data_id[1];
-
-assign lfb_bypass_chg_tag_data0 = lfb_bypass_chg_tag && snq_entry_bypass_lfb_data_id[0];
-assign lfb_bypass_chg_tag_data1 = lfb_bypass_chg_tag && snq_entry_bypass_lfb_data_id[1];
+genvar i,j;
+generate
+  for(i = 0; i < LFB_DATA_ENTRY; i=i+1) begin
+    assign lfb_bypass_invalid_data[i] = lfb_bypass_invalid && snq_entry_bypass_lfb_data_id[i];
+    assign lfb_bypass_chg_tag_data[i] = lfb_bypass_chg_tag && snq_entry_bypass_lfb_data_id[i];
+  end
+endgenerate
 //--------------------------------------
 //addr/type/prot
 assign snq_entry_from_snq_create_addr[`PA_WIDTH-1:0] = snq_create_addr[`PA_WIDTH-1:0];
@@ -940,10 +936,8 @@ assign snq_entry_bypass_db_id_v[2:0] = snq_entry_bypass_db_id[2:0];
 //for evict deadlock
 assign snq_entry_depd_vb_id_v[1:0] = snq_entry_depd_vb_id[1:0];
 
-assign snq_entry_lfb_bypass_invalid_data0_x = lfb_bypass_invalid_data0;
-assign snq_entry_lfb_bypass_invalid_data1_x = lfb_bypass_invalid_data1;
-assign snq_entry_lfb_bypass_chg_tag_data0_x = lfb_bypass_chg_tag_data0;
-assign snq_entry_lfb_bypass_chg_tag_data1_x = lfb_bypass_chg_tag_data1;
+assign snq_entry_lfb_bypass_chg_tag_data_x = lfb_bypass_invalid_data;
+assign snq_entry_lfb_bypass_invalid_data_x = lfb_bypass_chg_tag_data;
 //--------------------------------------
 //hit idx
 assign snq_entry_wmb_write_req_hit_idx_x  = snq_entry_wmb_write_req_hit_idx;

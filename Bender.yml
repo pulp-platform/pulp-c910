@@ -2,13 +2,14 @@
 # Solderpad Hardware License, Version 0.51, see LICENSE for details.
 # SPDX-License-Identifier: SHL-0.51
 package:
-  name: pulp_c910
+  name: pulp-c910
   authors:
+  - Zexin Fu <zexifu@iis.ee.ethz.ch>
   - Nils Wistoff <nwistoff@iis.ee.ethz.ch>
   - T-Head Semiconductor Co., Ltd.
 
 dependencies:
-  axi: { git: "git@github.com:pulp-platform/axi.git", rev: "7f82d0b748266984fd4b77a936fa893c600686d4" } # nw/axi_burst_unwrap
+  axi: { git: "https://github.com/pulp-platform/axi.git", version: 0.39.7 }
   common_cells: { git: "https://github.com/pulp-platform/common_cells.git", version: 1.26.0 }
 
 vendor_package:
@@ -533,7 +534,7 @@ sources:
     - vendor/thead_openc910/smart_run/logical/axi/axi_interconnect128.v
     - vendor/thead_openc910/smart_run/logical/axi/axi_fifo_entry.v
     - vendor/thead_openc910/smart_run/logical/axi/axi2ahb.v
-    - vendor/thead_openc910/smart_run/logical/axi/axi_fifo.v
+    - vendor/thead_openc910/smart_run/logical/axi/axi_fifo_c910.v
     - vendor/thead_openc910/smart_run/logical/axi/axi_slave128.v
     - vendor/thead_openc910/smart_run/logical/axi/axi_err128.v
     - vendor/thead_openc910/smart_run/logical/pmu/sync.v
@@ -546,11 +547,12 @@ sources:
     - vendor/thead_openc910/smart_run/logical/uart/uart_baud_gen.v
     - vendor/thead_openc910/smart_run/logical/uart/uart_apb_reg.v
     - vendor/thead_openc910/smart_run/logical/uart/uart_ctrl.v
-    - target: any(simulation, test)
+    - target: any(simulation, test, synthesis)
       files:
         - vendor/thead_openc910/C910_RTL_FACTORY/gen_rtl/common/rtl/BUFGCE.v
         # - smart_run/logical/tb/tb.v
 
-  # pulp_c910
+  # pulp-c910
   - files:
+    - hw/axi_burst_undec.sv
     - hw/c910_axi_wrap.sv

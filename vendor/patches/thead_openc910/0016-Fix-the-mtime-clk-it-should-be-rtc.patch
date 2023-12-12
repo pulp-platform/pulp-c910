@@ -1,0 +1,49 @@
+From c9e3d69658731c947e0a4fce079842d771154141 Mon Sep 17 00:00:00 2001
+From: Zexin Fu <zexifu@iis.ee.ethz.ch>
+Date: Thu, 1 May 2025 19:09:47 +0200
+Subject: [PATCH 16/24] Fix the mtime clk, it should be rtc.
+
+---
+ smart_run/logical/common/cpu_sub_system_axi.v | 5 ++++-
+ 1 file changed, 4 insertions(+), 1 deletion(-)
+
+diff --git a/smart_run/logical/common/cpu_sub_system_axi.v b/smart_run/logical/common/cpu_sub_system_axi.v
+index 153f480..d66ca87 100644
+--- a/smart_run/logical/common/cpu_sub_system_axi.v
++++ b/smart_run/logical/common/cpu_sub_system_axi.v
+@@ -40,6 +40,7 @@ module cpu_sub_system_axi
+   pad_had_jtg_trst_b                       ,
+   pad_yy_dft_clk_rst_b                     ,
+   pll_cpu_clk                              ,
++  rtc_cpu_clk                              ,
+   // clint
+   ipi_i                                    ,
+   time_irq_i                               ,
+@@ -111,6 +112,7 @@ input                  pad_had_jtg_tdi                          ;
+ input                  pad_had_jtg_trst_b                       ;
+ input                  pad_yy_dft_clk_rst_b                     ;
+ input                  pll_cpu_clk                              ;
++input                  rtc_cpu_clk                              ;
+ // clint
+ input                  ipi_i                                    ;
+ input                  time_irq_i                               ;
+@@ -183,6 +185,7 @@ wire       [144 - 1 : 0] pad_plic_int_cfg ;
+ wire       [144 - 1 : 0] pad_plic_int_vld ;
+ wire                   pad_yy_dft_clk_rst_b                     ;
+ wire                   pll_cpu_clk                              ;
++wire                   rtc_cpu_clk                              ;
+ // clint
+ wire                   ipi_i                                    ;
+ wire                   time_irq_i                               ;
+@@ -383,7 +386,7 @@ assign pad_had_jtg_tms     = i_pad_jtg_tms;
+ assign biu_pad_lpmd_b[1:0] = core0_pad_lpmd_b;
+ 
+ // system timer simple model
+-always@(posedge pll_cpu_clk or negedge pad_cpu_rst_b)
++always@(posedge rtc_cpu_clk or negedge pad_cpu_rst_b)
+ begin
+   if (!pad_cpu_rst_b)
+     pad_cpu_sys_cnt <= 64'b0;
+-- 
+2.39.3
+

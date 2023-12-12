@@ -62,14 +62,23 @@ parameter WE_WIDTH   = 59;
   //********************************************************
   //{WEN[58],WEN[57:29],WEN[28:0]}
 //   &Instance("ct_f_spsram_512x59"); @44
-ct_f_spsram_512x59  x_ct_f_spsram_512x59 (
-  .A    (A   ),
-  .CEN  (CEN ),
-  .CLK  (CLK ),
-  .D    (D   ),
-  .GWEN (GWEN),
-  .Q    (Q   ),
-  .WEN  (WEN )
+tc_sram #(
+  .NumWords   ( 1<<ADDR_WIDTH         ),
+  .DataWidth  ( DATA_WIDTH            ),
+  .ByteWidth  ( DATA_WIDTH/DATA_WIDTH ),
+  .NumPorts   ( 32'd1 ),
+  .Latency    ( 32'd1 ),
+  .SimInit    ( "none"),
+  .PrintSimCfg( 0     )
+) i_tc_sram (
+    .clk_i    ( CLK   ),
+    .rst_ni   ( 1'b1  ),
+    .req_i    ( ~CEN  ),
+    .we_i     ( ~GWEN ),
+    .be_i     ( ~WEN  ),
+    .wdata_i  ( D     ),
+    .addr_i   ( A     ),
+    .rdata_o  ( Q     )
 );
 
 //   &Instance("ct_tsmc_spsram_512x59"); @50

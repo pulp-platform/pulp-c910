@@ -1,0 +1,156 @@
+From 829c43b703288e6a9c5875225e663ffcd6ea38f4 Mon Sep 17 00:00:00 2001
+From: Zexin Fu <zexifu@iis.ee.ethz.ch>
+Date: Wed, 30 Apr 2025 22:26:24 +0200
+Subject: [PATCH 17/24] To handle the Evict AW request sent from the c910
+ private cache in an AXI compatible way:
+
+1. Add aw/w logic to the c910 ACE/AXI interface, have it send an Evict AW req and then also send a dummy W req. And add ace_dummy_handler as the slave device to handle the ace transaction on the bus. Essentially, it receives the AW and W req sent to it and responds to it with B resp;
+2. Add unsent w burst counter to prevent the ace handler from inserting a w into a ongoing w burst.
+---
+ C910_RTL_FACTORY/gen_rtl/cpu/rtl/openC910.v | 104 ++++++++++++++++++--
+ 1 file changed, 96 insertions(+), 8 deletions(-)
+
+diff --git a/C910_RTL_FACTORY/gen_rtl/cpu/rtl/openC910.v b/C910_RTL_FACTORY/gen_rtl/cpu/rtl/openC910.v
+index 6d7fde6..022043d 100644
+--- a/C910_RTL_FACTORY/gen_rtl/cpu/rtl/openC910.v
++++ b/C910_RTL_FACTORY/gen_rtl/cpu/rtl/openC910.v
+@@ -730,6 +730,94 @@ assign ibiu0_pad_crresp  = 5'b0;
+ assign ibiu0_pad_crvalid = pad_ibiu0_acvalid;
+ 
+ // core axi output
++wire awsnoop_evict;
++wire [39 :0] awsnoop_evict_awaddr;
++wire [7  :0] awsnoop_evict_awlen;
++wire [2  :0] awsnoop_evict_awsize;
++
++wire awsnoop_evict_w_valid;
++wire awsnoop_evict_w_ready;
++wire awsnoop_evict_w_last;
++wire awsnoop_evict_aw_valid;
++wire awsnoop_evict_aw_ready;
++
++reg  wsnoop_en;
++
++reg dummy_w_req_vld_d, dummy_w_req_vld_q;
++reg dummy_w_req_vld_en;
++
++  // record the number of handshaked aw but unsent w burst
++wire [8-1:0] unsent_w_cnt_d;
++reg  [8-1:0] unsent_w_cnt_q;
++wire unsent_w_cnt_en;
++
++wire in_aw_hsk;
++wire out_w_hsk;
++
++assign unsent_w_cnt_d  = unsent_w_cnt_q + (in_aw_hsk ? ((&biu_pad_awlen[1:0]) ? 4 : 1) : 0)
++                                        - (out_w_hsk ? 1 : 0);
++assign unsent_w_cnt_en = out_w_hsk | in_aw_hsk;
++
++assign out_w_hsk = biu_pad_wvalid & pad_biu_wready;
++assign in_aw_hsk = biu_pad_awvalid & pad_biu_awready;
++
++  // evict snoop
++assign awsnoop_evict = (ibiu0_pad_awsnoop[2  :0] == 3'h4);
++assign awsnoop_evict_awaddr = 40'h40000;
++assign awsnoop_evict_awlen  = 8'h0;
++assign awsnoop_evict_awsize = 3'b0;
++
++assign awsnoop_evict_w_valid  = 1'b1;
++assign awsnoop_evict_w_ready  = 1'b0;
++assign awsnoop_evict_w_last   = 1'b1;
++assign awsnoop_evict_aw_valid = 1'b0;
++assign awsnoop_evict_aw_ready = 1'b0;
++
++always @(*) begin
++  dummy_w_req_vld_d   = dummy_w_req_vld_q;
++  dummy_w_req_vld_en  = 1'b0;
++  wsnoop_en  = 1'b0;
++  
++  case (dummy_w_req_vld_q)
++    1'b0: begin
++      if(in_aw_hsk & awsnoop_evict) begin
++        dummy_w_req_vld_d   = 1'b1;
++        dummy_w_req_vld_en  = 1'b1;
++      end
++    end
++    1'b1: begin
++      if(unsent_w_cnt_q == 8'b1) begin // no inflight w transaction other than the fake w for evict snoop
++        wsnoop_en = 1'b1;
++        if(out_w_hsk) begin
++          dummy_w_req_vld_d   = 1'b0;
++          dummy_w_req_vld_en  = 1'b1;
++        end
++      end
++    end
++    default:;
++  endcase
++end
++
++always @(posedge forever_core0_clk or negedge pad_cpu_rst_b) begin
++  if(!pad_cpu_rst_b) begin
++    dummy_w_req_vld_q <= 1'b0;
++  end else begin
++    if(dummy_w_req_vld_en) begin
++      dummy_w_req_vld_q <= dummy_w_req_vld_d;
++    end
++  end
++end
++
++always @(posedge forever_core0_clk or negedge pad_cpu_rst_b) begin
++  if(!pad_cpu_rst_b) begin
++    unsent_w_cnt_q <= 8'b0;
++  end else begin
++    if(unsent_w_cnt_en) begin
++      unsent_w_cnt_q <= unsent_w_cnt_d;
++    end
++  end
++end
++
+ assign biu_pad_araddr     [39 :0] = ibiu0_pad_araddr  [39 :0];
+ assign biu_pad_arburst    [1  :0] = ibiu0_pad_arburst [1  :0];
+ assign biu_pad_arcache    [3  :0] = ibiu0_pad_arcache [3  :0];
+@@ -739,21 +827,21 @@ assign biu_pad_arlock             = ibiu0_pad_arlock         ;
+ assign biu_pad_arprot     [2  :0] = ibiu0_pad_arprot  [2  :0];
+ assign biu_pad_arsize     [2  :0] = ibiu0_pad_arsize  [2  :0];
+ assign biu_pad_arvalid            = ibiu0_pad_arvalid        ;
+-assign biu_pad_awaddr     [39 :0] = ibiu0_pad_awaddr  [39 :0];
++assign biu_pad_awaddr     [39 :0] = awsnoop_evict ? awsnoop_evict_awaddr : ibiu0_pad_awaddr  [39 :0]; // redirect the Evict req to the ACE convert module
+ assign biu_pad_awburst    [1  :0] = ibiu0_pad_awburst [1  :0];
+ assign biu_pad_awcache    [3  :0] = ibiu0_pad_awcache [3  :0];
+ assign biu_pad_awid       [7  :0] = {3'b0, ibiu0_pad_awid    [4  :0]};
+-assign biu_pad_awlen      [7  :0] = {6'b0, ibiu0_pad_awlen   [1  :0]};
++assign biu_pad_awlen      [7  :0] = awsnoop_evict ? awsnoop_evict_awlen : {6'b0, ibiu0_pad_awlen   [1  :0]};
+ assign biu_pad_awlock             = ibiu0_pad_awlock         ;
+ assign biu_pad_awprot     [2  :0] = ibiu0_pad_awprot  [2  :0];
+-assign biu_pad_awsize     [2  :0] = ibiu0_pad_awsize  [2  :0];
+-assign biu_pad_awvalid            = ibiu0_pad_awvalid        ;
++assign biu_pad_awsize     [2  :0] = awsnoop_evict ? awsnoop_evict_awsize : ibiu0_pad_awsize  [2  :0];
++assign biu_pad_awvalid            = dummy_w_req_vld_q ? awsnoop_evict_aw_valid : ibiu0_pad_awvalid        ;
+ assign biu_pad_bready             = ibiu0_pad_bready         ;
+ assign biu_pad_rready             = ibiu0_pad_rready         ;
+ assign biu_pad_wdata      [127:0] = ibiu0_pad_wdata   [127:0];
+-assign biu_pad_wlast              = ibiu0_pad_wlast          ;
++assign biu_pad_wlast              = wsnoop_en ? awsnoop_evict_w_last : ibiu0_pad_wlast          ;
+ assign biu_pad_wstrb      [15 :0] = ibiu0_pad_wstrb   [15 :0];
+-assign biu_pad_wvalid             = ibiu0_pad_wvalid         ;
++assign biu_pad_wvalid             = wsnoop_en ? awsnoop_evict_w_valid : ibiu0_pad_wvalid         ;
+ 
+ // core axi input
+ assign pad_ibiu0_arready          = pad_biu_arready          ;
+@@ -766,11 +854,11 @@ assign pad_ibiu0_bid      [4  :0] = pad_biu_bid       [4  :0];
+ assign pad_ibiu0_bresp    [1  :0] = pad_biu_bresp     [1  :0];
+ assign pad_ibiu0_bvalid           = pad_biu_bvalid           ;
+ 
+-assign pad_ibiu0_awready            = pad_biu_awready          ;
++assign pad_ibiu0_awready            = dummy_w_req_vld_q ? awsnoop_evict_aw_ready : pad_biu_awready          ;
+ assign pad_ibiu0_wns_awready        = pad_ibiu0_awready        ;
+ assign pad_ibiu0_ws_awready         = pad_ibiu0_awready        ;
+ 
+-assign pad_ibiu0_wready             = pad_biu_wready           ;
++assign pad_ibiu0_wready             = wsnoop_en ? awsnoop_evict_w_ready : pad_biu_wready           ;
+ assign pad_ibiu0_wns_wready         = pad_ibiu0_wready         ;
+ assign pad_ibiu0_ws_wready          = pad_ibiu0_wready         ;
+ 
+-- 
+2.39.3
+

@@ -34,7 +34,7 @@ limitations under the License.
 
 
 
-module gpio(
+module gpio_c910(
   b_pad_gpio_porta,
   gpio_intr,
   paddr,

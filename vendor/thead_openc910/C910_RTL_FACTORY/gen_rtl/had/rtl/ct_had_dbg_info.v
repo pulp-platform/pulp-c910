@@ -14,7 +14,9 @@ limitations under the License.
 */
 
 // &ModuleBeg; @23
-module ct_had_dbg_info(
+module ct_had_dbg_info #(
+  parameter LFB_DATA_ENTRY = 8
+)(
   cp0_had_debug_info,
   cpuclk,
   cpurst_b,
@@ -73,7 +75,7 @@ input   [82 :0]  ifu_had_debug_info;
 input            ir_xx_pipesel_reg_sel;       
 input   [63 :0]  ir_xx_wdata;                 
 input   [9  :0]  iu_had_debug_info;           
-input   [183:0]  lsu_had_debug_info;          
+input   [183-2*2+LFB_DATA_ENTRY*2:0]  lsu_had_debug_info;          
 input   [39 :0]  lsu_had_st_addr;             
 input   [63 :0]  lsu_had_st_data;             
 input            lsu_had_st_req;              
@@ -107,7 +109,7 @@ reg     [2  :0]  pipefifo_sel;
 reg     [1  :0]  pipesel;                     
 reg     [4  :0]  rptr;                        
 reg     [4  :0]  wptr;                        
-reg     [407:0]  xx_dbg_info_reg;             
+reg     [407-2*2+LFB_DATA_ENTRY*2:0]  xx_dbg_info_reg;             
 
 // &Wires; @26
 wire    [3  :0]  cp0_had_debug_info;          
@@ -137,7 +139,7 @@ wire    [82 :0]  ifu_had_debug_info;
 wire             ir_xx_pipesel_reg_sel;       
 wire    [63 :0]  ir_xx_wdata;                 
 wire    [9  :0]  iu_had_debug_info;           
-wire    [183:0]  lsu_had_debug_info;          
+wire    [183-2*2+LFB_DATA_ENTRY*2:0]  lsu_had_debug_info;          
 wire    [39 :0]  lsu_had_st_addr;             
 wire    [63 :0]  lsu_had_st_data;             
 wire             lsu_had_st_req;              
@@ -172,7 +174,7 @@ wire    [15 :0]  wptr_sel_1;
 wire    [15 :0]  wptr_sel_2;                  
 wire             x_dbg_ack_pc;                
 wire             x_sm_xx_update_dr_en;        
-wire    [407:0]  xx_dgb_info;                 
+wire    [407-2*2+LFB_DATA_ENTRY*2:0]  xx_dgb_info;                 
 
 
 // &Force("nonport","pipefifo_din_0"); @28
@@ -379,7 +381,7 @@ assign dbginfo_reg[2][63:0] = xx_dbg_info_reg[191:128];
 assign dbginfo_reg[3][63:0] = xx_dbg_info_reg[255:192];
 assign dbginfo_reg[4][63:0] = xx_dbg_info_reg[319:256];
 assign dbginfo_reg[5][63:0] = xx_dbg_info_reg[383:320];
-assign dbginfo_reg[6][63:0] = {40'b0, xx_dbg_info_reg[407:384]};
+assign dbginfo_reg[6][63:0] = {{(40+2*2-LFB_DATA_ENTRY*2){1'b0}}, xx_dbg_info_reg[407-2*2+LFB_DATA_ENTRY*2:384]};
 //csky vperl_on
 
 // &Force("input","ctrl_dbgfifo_ren"); @221
@@ -401,12 +403,12 @@ assign dbgfifo_regs_data[DBG_WIDTH-1:0] = dbginfo_dout[DBG_WIDTH-1:0];
 //==========================================================
 //                 DBGINFO FIFO write
 //==========================================================
-assign xx_dgb_info[407:0] = {mmu_had_debug_info[33:0],
+assign xx_dgb_info[407-2*2+LFB_DATA_ENTRY*2:0] = {mmu_had_debug_info[33:0],
                              rtu_had_debug_info[42:0],
                              cp0_had_debug_info[3:0],
                              iu_had_debug_info[9:0],
                              idu_had_debug_info[49:0],
-                             lsu_had_debug_info[183:0],
+                             lsu_had_debug_info[183-2*2+LFB_DATA_ENTRY*2:0],
                              ifu_had_debug_info[82:0]};
 
 always @(posedge cpuclk or negedge cpurst_b)
@@ -422,9 +424,9 @@ end
 always @(posedge cpuclk or negedge cpurst_b)
 begin
   if (!cpurst_b)
-    xx_dbg_info_reg[407:0] <= 408'b0;
+    xx_dbg_info_reg[407-2*2+LFB_DATA_ENTRY*2:0] <= {(408-2*2+LFB_DATA_ENTRY*2){1'b0}};
   else if (dbg_ack_pc_f)
-    xx_dbg_info_reg[407:0] <= xx_dgb_info[407:0];
+    xx_dbg_info_reg[407-2*2+LFB_DATA_ENTRY*2:0] <= xx_dgb_info[407-2*2+LFB_DATA_ENTRY*2:0];
 end
 
 always @(posedge cpuclk or negedge cpurst_b)

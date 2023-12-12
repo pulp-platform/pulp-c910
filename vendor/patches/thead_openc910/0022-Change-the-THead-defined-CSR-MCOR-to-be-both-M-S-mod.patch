@@ -1,0 +1,28 @@
+From f82cdd14f84dd630073728ecb5dbfcd9f1b14f43 Mon Sep 17 00:00:00 2001
+From: Zexin Fu <zexifu@iis.ee.ethz.ch>
+Date: Wed, 30 Apr 2025 23:44:04 +0200
+Subject: [PATCH 22/24] Change the THead defined CSR MCOR to be both M & S mode
+ readable/writable, for cache inv/clr in S mode.
+
+---
+ C910_RTL_FACTORY/gen_rtl/cp0/rtl/ct_cp0_iui.v | 4 +++-
+ 1 file changed, 3 insertions(+), 1 deletion(-)
+
+diff --git a/C910_RTL_FACTORY/gen_rtl/cp0/rtl/ct_cp0_iui.v b/C910_RTL_FACTORY/gen_rtl/cp0/rtl/ct_cp0_iui.v
+index 8838855..c1a8e72 100644
+--- a/C910_RTL_FACTORY/gen_rtl/cp0/rtl/ct_cp0_iui.v
++++ b/C910_RTL_FACTORY/gen_rtl/cp0/rtl/ct_cp0_iui.v
+@@ -1321,7 +1321,9 @@ assign iui_hs_inv = 1'b0;
+ 
+ // s-mode access m-mode csr or inst
+ assign iui_s_inv  = iui_s_mode  
+-                && (iui_inst_csr && iui_addr[9:8] == 2'b11
++                && (iui_inst_csr && (iui_addr[9:8] == 2'b11) &&
++                    ((iui_addr[11:10] != 2'b01) && 
++                     (iui_addr[7:0] != 8'b1100_0010)) // exclude MCOR here, allow MCOR to be writen in S mode
+                     || iui_inst_mret
+                     || iui_inst_sret && regs_iui_tsr
+                     || iui_inst_wfi && regs_iui_tw
+-- 
+2.39.3
+

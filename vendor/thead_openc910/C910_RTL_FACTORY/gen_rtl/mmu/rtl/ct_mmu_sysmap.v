@@ -181,8 +181,8 @@ begin
     8'b00100000  : sysmap_mmu_flg_y[FLG_WIDTH-1:0] = `SYSMAP_FLG5;
     8'b01000000  : sysmap_mmu_flg_y[FLG_WIDTH-1:0] = `SYSMAP_FLG6;
     8'b10000000  : sysmap_mmu_flg_y[FLG_WIDTH-1:0] = `SYSMAP_FLG7;
-    //default      : sysmap_mmu_flg_y[FLG_WIDTH-1:0] = 5'b01111;
-    default      : sysmap_mmu_flg_y[FLG_WIDTH-1:0] = 5'b10011;
+    default      : sysmap_mmu_flg_y[FLG_WIDTH-1:0] = 5'b01111;
+    // default      : sysmap_mmu_flg_y[FLG_WIDTH-1:0] = 5'b10011;
 endcase
 // &CombEnd; @90
 end

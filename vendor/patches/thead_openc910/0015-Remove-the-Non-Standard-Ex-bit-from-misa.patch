@@ -1,0 +1,25 @@
+From cee28f40c962bd54ed77490e304b6d3b9d4208c6 Mon Sep 17 00:00:00 2001
+From: Zexin Fu <zexifu@iis.ee.ethz.ch>
+Date: Wed, 30 Apr 2025 22:12:38 +0200
+Subject: [PATCH 15/24] Remove the "Non-Standard Ex" bit from misa.
+
+---
+ C910_RTL_FACTORY/gen_rtl/cp0/rtl/ct_cp0_regs.v | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/C910_RTL_FACTORY/gen_rtl/cp0/rtl/ct_cp0_regs.v b/C910_RTL_FACTORY/gen_rtl/cp0/rtl/ct_cp0_regs.v
+index fac4748..3a7c65d 100644
+--- a/C910_RTL_FACTORY/gen_rtl/cp0/rtl/ct_cp0_regs.v
++++ b/C910_RTL_FACTORY/gen_rtl/cp0/rtl/ct_cp0_regs.v
+@@ -1737,7 +1737,7 @@ assign mxl[1:0] = 2'b10;
+ //  X    V    U    S    M    I   H   F   D   C   A
+ assign misa_vector = 1'b0;
+ assign misa_hypervisor = 1'b0;
+-assign extensions[25:0] = {2'b0, 2'b10, misa_vector, 1'b1, 4'b0100,
++assign extensions[25:0] = {2'b0, 2'b00, misa_vector, 1'b1, 4'b0100,
+                                 4'b0001, 4'b0001, misa_hypervisor, 3'b010, 4'b1101};
+ assign misa_value[63:0] = {mxl[1:0], 36'b0, extensions[25:0]};
+ 
+-- 
+2.39.3
+

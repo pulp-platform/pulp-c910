@@ -14,7 +14,9 @@ limitations under the License.
 */
 
 // &ModuleBeg; @24
-module ct_lsu_top(
+module ct_lsu_top #(
+  parameter LFB_DATA_ENTRY = 8
+)(
   biu_lsu_ac_addr,
   biu_lsu_ac_prot,
   biu_lsu_ac_req,
@@ -791,7 +793,7 @@ output           lsu_biu_w_vict_wns;
 output           lsu_cp0_dcache_done;                    
 output  [127:0]  lsu_cp0_dcache_read_data;               
 output           lsu_cp0_dcache_read_data_vld;           
-output  [183:0]  lsu_had_debug_info;                     
+output  [183-2*2+LFB_DATA_ENTRY*2:0]  lsu_had_debug_info;                     
 output  [39 :0]  lsu_had_ld_addr;                        
 output  [63 :0]  lsu_had_ld_data;                        
 output  [6  :0]  lsu_had_ld_iid;                         
@@ -1586,7 +1588,7 @@ wire             lfb_rb_biu_req_hit_idx;
 wire             lfb_rb_ca_rready_grnt;                  
 wire    [4  :0]  lfb_rb_create_id;                       
 wire             lfb_rb_nc_rready_grnt;                  
-wire    [1  :0]  lfb_snq_bypass_data_id;                 
+wire    [LFB_DATA_ENTRY-1 :0]  lfb_snq_bypass_data_id;                 
 wire             lfb_snq_bypass_hit;                     
 wire             lfb_snq_bypass_share;                   
 wire             lfb_st_da_hit_idx;                      
@@ -1719,7 +1721,7 @@ wire    [1  :0]  lsu_had_cdr_state;
 wire    [5  :0]  lsu_had_ctcq_entry_2_cmplt;             
 wire    [5  :0]  lsu_had_ctcq_entry_cmplt;               
 wire    [5  :0]  lsu_had_ctcq_entry_vld;                 
-wire    [183:0]  lsu_had_debug_info;                     
+wire    [183-2*2+LFB_DATA_ENTRY*2:0]  lsu_had_debug_info;                     
 wire    [2  :0]  lsu_had_icc_state;                      
 wire    [39 :0]  lsu_had_ld_addr;                        
 wire    [63 :0]  lsu_had_ld_data;                        
@@ -1729,8 +1731,8 @@ wire    [3  :0]  lsu_had_ld_type;
 wire    [7  :0]  lsu_had_lfb_addr_entry_dcache_hit;      
 wire    [7  :0]  lsu_had_lfb_addr_entry_rcl_done;        
 wire    [7  :0]  lsu_had_lfb_addr_entry_vld;             
-wire    [1  :0]  lsu_had_lfb_data_entry_last;            
-wire    [1  :0]  lsu_had_lfb_data_entry_vld;             
+wire    [LFB_DATA_ENTRY-1 :0]  lsu_had_lfb_data_entry_last;            
+wire    [LFB_DATA_ENTRY-1 :0]  lsu_had_lfb_data_entry_vld;             
 wire             lsu_had_lfb_lf_sm_vld;                  
 wire    [12 :0]  lsu_had_lfb_wakeup_queue;               
 wire    [2  :0]  lsu_had_lm_state;                       
@@ -2200,8 +2202,8 @@ wire             snq_dcache_arb_st_tag_req;
 wire    [2  :0]  snq_dcache_sdb_id;                      
 wire    [1  :0]  snq_depd_vb_id;                         
 wire             snq_empty;                              
-wire    [1  :0]  snq_lfb_bypass_chg_tag;                 
-wire    [1  :0]  snq_lfb_bypass_invalid;                 
+wire    [LFB_DATA_ENTRY-1  :0]  snq_lfb_bypass_chg_tag;                 
+wire    [LFB_DATA_ENTRY-1  :0]  snq_lfb_bypass_invalid;                 
 wire             snq_lfb_vb_req_hit_idx;                 
 wire    [33 :0]  snq_lm_dcache_addr_tto6;                
 wire             snq_lm_dcache_req_for_inv;              

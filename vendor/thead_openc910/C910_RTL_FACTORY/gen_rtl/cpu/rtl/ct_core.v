@@ -17,7 +17,9 @@ limitations under the License.
 // //&Depend("core_golden_port.vp"); @24
 
 // &ModuleBeg; @26
-module ct_core(
+module ct_core #(
+  parameter LFB_DATA_ENTRY = 8
+)(
   biu_cp0_apb_base,
   biu_cp0_cmplt,
   biu_cp0_coreid,
@@ -790,7 +792,7 @@ output           lsu_biu_w_vict_last;
 output  [15 :0]  lsu_biu_w_vict_strb;                    
 output           lsu_biu_w_vict_vld;                     
 output           lsu_biu_w_vict_wns;                     
-output  [183:0]  lsu_had_debug_info;                     
+output  [183-2*2+LFB_DATA_ENTRY*2:0]  lsu_had_debug_info;                     
 output  [39 :0]  lsu_had_ld_addr;                        
 output  [63 :0]  lsu_had_ld_data;                        
 output  [6  :0]  lsu_had_ld_iid;                         
@@ -1793,7 +1795,7 @@ wire             lsu_biu_w_vict_wns;
 wire             lsu_cp0_dcache_done;                    
 wire    [127:0]  lsu_cp0_dcache_read_data;               
 wire             lsu_cp0_dcache_read_data_vld;           
-wire    [183:0]  lsu_had_debug_info;                     
+wire    [183-2*2+LFB_DATA_ENTRY*2:0]  lsu_had_debug_info;                     
 wire    [39 :0]  lsu_had_ld_addr;                        
 wire    [63 :0]  lsu_had_ld_data;                        
 wire    [6  :0]  lsu_had_ld_iid;                         
