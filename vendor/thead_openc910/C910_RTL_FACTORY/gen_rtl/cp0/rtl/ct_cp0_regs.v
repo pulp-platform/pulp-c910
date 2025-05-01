@@ -134,6 +134,7 @@ module ct_cp0_regs(
   cp0_mmu_wdata,
   cp0_mmu_wreg,
   cp0_mret,
+  cp0_dret,
   cp0_pad_mstatus,
   cp0_pmp_icg_en,
   cp0_pmp_mpp,
@@ -175,6 +176,7 @@ module ct_cp0_regs(
   iui_regs_ex3_inst_csr,
   iui_regs_inst_mret,
   iui_regs_inst_sret,
+  iui_regs_inst_dret,
   iui_regs_inv_expt,
   iui_regs_opcode,
   iui_regs_ori_src0,
@@ -202,6 +204,7 @@ module ct_cp0_regs(
   regs_iui_int_sel,
   regs_iui_l2_regs_sel,
   regs_iui_pm,
+  regs_iui_d,
   regs_iui_reg_idx,
   regs_iui_scnt_inv,
   regs_iui_tee_ff,
@@ -231,7 +234,13 @@ module ct_cp0_regs(
   rtu_cp0_vstart,
   rtu_cp0_vstart_vld,
   rtu_yy_xx_expt_vec,
-  rtu_yy_xx_flush
+  rtu_yy_xx_flush,
+
+  // debug request
+  debug_req_i,
+  // dcsr to ct_rtu_retire
+  dcsr_value_o,
+  is_vld_ebreak_inst_i
 );
 
 // &Ports; @25
@@ -247,6 +256,7 @@ input            biu_cp0_se_int;
 input            biu_cp0_ss_int;                 
 input            biu_cp0_st_int;                 
 input            cp0_mret;                       
+input            cp0_dret;
 input            cp0_sret;                       
 input            cp0_yy_clk_en;                  
 input            cpurst_b;                       
@@ -270,6 +280,7 @@ input            iui_regs_csrw;
 input            iui_regs_ex3_inst_csr;          
 input            iui_regs_inst_mret;             
 input            iui_regs_inst_sret;             
+input            iui_regs_inst_dret;
 input            iui_regs_inv_expt;              
 input   [31 :0]  iui_regs_opcode;                
 input   [63 :0]  iui_regs_ori_src0;              
@@ -301,6 +312,12 @@ input   [6  :0]  rtu_cp0_vstart;
 input            rtu_cp0_vstart_vld;             
 input   [5  :0]  rtu_yy_xx_expt_vec;             
 input            rtu_yy_xx_flush;                
+// debug request
+input            debug_req_i;
+// dcsr to ct_rtu_retire
+output  [63 :0]  dcsr_value_o;
+input            is_vld_ebreak_inst_i;
+
 output           cp0_biu_icg_en;                 
 output  [31 :0]  cp0_had_cpuid_0;                
 output  [1  :0]  cp0_had_trace_pm_wdata;         
@@ -437,6 +454,7 @@ output           regs_iui_hpcp_scr_inv;
 output  [14 :0]  regs_iui_int_sel;               
 output           regs_iui_l2_regs_sel;           
 output  [1  :0]  regs_iui_pm;                    
+output           regs_iui_d;
 output  [3  :0]  regs_iui_reg_idx;               
 output           regs_iui_scnt_inv;              
 output           regs_iui_tee_ff;                
@@ -728,6 +746,7 @@ wire             cp0_mmu_sum;
 wire    [63 :0]  cp0_mmu_wdata;                  
 wire             cp0_mmu_wreg;                   
 wire             cp0_mret;                       
+wire             cp0_dret;
 wire    [63 :0]  cp0_pad_mstatus;                
 wire             cp0_pmp_icg_en;                 
 wire    [1  :0]  cp0_pmp_mpp;                    
@@ -803,6 +822,7 @@ wire             iui_regs_csrw;
 wire             iui_regs_ex3_inst_csr;          
 wire             iui_regs_inst_mret;             
 wire             iui_regs_inst_sret;             
+wire             iui_regs_inst_dret;
 wire             iui_regs_inv_expt;              
 wire    [31 :0]  iui_regs_opcode;                
 wire    [63 :0]  iui_regs_ori_src0;              
@@ -940,6 +960,7 @@ wire             regs_iui_hpcp_scr_inv;
 wire    [14 :0]  regs_iui_int_sel;               
 wire             regs_iui_l2_regs_sel;           
 wire    [1  :0]  regs_iui_pm;                    
+wire             regs_iui_d;
 wire    [3  :0]  regs_iui_reg_idx;               
 wire             regs_iui_scnt_inv;              
 wire             regs_iui_tee_ff;                
@@ -1046,7 +1067,45 @@ wire    [63 :0]  vxsat_value;
 wire             wb;                             
 wire             wbr;                            
 wire    [1  :0]  xs;                             
+// debug request
+wire             debug_req_i;
+// dcsr to ct_rtu_retire
+wire    [63 :0]  dcsr_value_o;
+wire             is_vld_ebreak_inst_i;
 
+reg              debug_mode_q;
+wire    [3  :0]  dcsr_debugver;
+reg     [2  :0]  dcsr_extcause;
+reg              dcsr_cetrig;
+reg              dcsr_ebreakvs;
+reg              dcsr_ebreakvu;
+reg              dcsr_ebreakm;
+reg              dcsr_ebreaks;
+reg              dcsr_ebreaku;
+reg              dcsr_stepie;
+wire             dcsr_stopcount;
+wire             dcsr_stoptime;
+reg     [2  :0]  dcsr_cause;
+reg              dcsr_v;
+reg              dcsr_mprven;
+wire             dcsr_nmip;
+reg              dcsr_step;
+reg     [1  :0]  dcsr_prv;
+wire    [63 :0]  dcsr_value;
+wire             dcsr_local_en;
+
+reg     [63 :0]  dpc_value;
+wire             dpc_local_en;
+
+reg     [63 :0]  dscratch0_value;
+wire             dscratch0_local_en;
+
+reg     [63 :0]  dscratch1_value;
+wire             dscratch1_local_en;
+
+wire             debug_exception_en;
+wire             rtu_cp0_expt_vld_no_dbg;
+wire             rtu_cp0_expt_vld_dbg;
 
 //==========================================================
 //                 Instance of Gated Cell  
@@ -1099,6 +1158,7 @@ assign regs_flush_clk_en = rtu_yy_xx_flush || iui_regs_sel
                         || cfr_bits_done
                         || iui_regs_inst_mret
                         || iui_regs_inst_sret
+                        || iui_regs_inst_dret
                         || iui_regs_inv_expt
                         || iui_regs_ex3_inst_csr
                         || fs_dirty_upd
@@ -1106,6 +1166,7 @@ assign regs_flush_clk_en = rtu_yy_xx_flush || iui_regs_sel
                         || rst_sample
                         || ifu_cp0_rst_inv_req
                         || tee_ff
+                        || (debug_req_i && !debug_mode_q)
                           ;
 // &Instance("gated_clk_cell", "x_regs_flush_gated_clk"); @68
 gated_clk_cell  x_regs_flush_gated_clk (
@@ -1370,6 +1431,18 @@ parameter HEDELEG   = 12'h602;
 
 parameter VSSTATUS  = 12'h200;
 
+// 6. Debug CSR
+parameter DCSR      = 12'h7b0;
+parameter DPC       = 12'h7b1;
+parameter DSCRATCH0 = 12'h7b2;
+parameter DSCRATCH1 = 12'h7b3;
+
+  // debug causes
+parameter CauseBreakpoint = 3'h1;
+parameter CauseTrigger    = 3'h2;
+parameter CauseRequest    = 3'h3;
+parameter CauseSingleStep = 3'h4;
+
 //==========================================================
 //              Generate Local Signal to CSRs
 //==========================================================
@@ -1439,6 +1512,11 @@ assign satp_local_en     = iui_regs_addr[11:0] == SATP;
 assign fxcr_local_en     = iui_regs_sel && iui_regs_addr[11:0] == FXCR;  
 
 assign shpmcr_local_en   = iui_regs_sel && iui_regs_addr[11:0] == SHPMCR;
+
+assign dcsr_local_en      = iui_regs_sel && iui_regs_addr[11:0] == DCSR;
+assign dpc_local_en       = iui_regs_sel && iui_regs_addr[11:0] == DPC;
+assign dscratch0_local_en = iui_regs_sel && iui_regs_addr[11:0] == DSCRATCH0;
+assign dscratch1_local_en = iui_regs_sel && iui_regs_addr[11:0] == DSCRATCH1;
 
 //==========================================================
 //                 1. Machine Level CSRs
@@ -1621,7 +1699,7 @@ always @(posedge regs_flush_clk or negedge cpurst_b)
 begin
   if(!cpurst_b)
     mpp[1:0] <= 2'b11;
-  else if(rtu_cp0_expt_vld && !mdeleg_vld)
+  else if(rtu_cp0_expt_vld_no_dbg && !mdeleg_vld)
     mpp[1:0] <= pm[1:0];
   else if(iui_regs_inst_mret)
     mpp[1:0] <= 2'b00;
@@ -1636,7 +1714,7 @@ always @(posedge regs_flush_clk or negedge cpurst_b)
 begin
   if(!cpurst_b)
     spp <= 1'b1;
-  else if(rtu_cp0_expt_vld && mdeleg_vld)
+  else if(rtu_cp0_expt_vld_no_dbg && mdeleg_vld)
     spp <= pm[0];
   else if(iui_regs_inst_sret)
     spp <= 1'b0;
@@ -1656,7 +1734,7 @@ always @(posedge regs_flush_clk or negedge cpurst_b)
 begin
   if(!cpurst_b)
     mpie <= 1'b0;
-  else if(rtu_cp0_expt_vld && !mdeleg_vld)
+  else if(rtu_cp0_expt_vld_no_dbg && !mdeleg_vld)
     mpie <= mie_bit;
   else if(iui_regs_inst_mret)
     mpie <= 1'b1;
@@ -1670,7 +1748,7 @@ always @(posedge regs_flush_clk or negedge cpurst_b)
 begin
   if(!cpurst_b)
     spie <= 1'b0;
-  else if(rtu_cp0_expt_vld && mdeleg_vld)
+  else if(rtu_cp0_expt_vld_no_dbg && mdeleg_vld)
     spie <= sie_bit;
   else if(iui_regs_inst_sret)
     spie <= 1'b1;
@@ -1686,7 +1764,7 @@ always @(posedge regs_flush_clk or negedge cpurst_b)
 begin
   if(!cpurst_b)
     mie_bit <= 1'b0;
-  else if(rtu_cp0_expt_vld && !mdeleg_vld)
+  else if(rtu_cp0_expt_vld_no_dbg && !mdeleg_vld)
     mie_bit <= 1'b0;
   else if(iui_regs_inst_mret)
     mie_bit <= mpie;
@@ -1700,7 +1778,7 @@ always @(posedge regs_flush_clk or negedge cpurst_b)
 begin
   if(!cpurst_b)
     sie_bit <= 1'b0;
-  else if(rtu_cp0_expt_vld && mdeleg_vld)
+  else if(rtu_cp0_expt_vld_no_dbg && mdeleg_vld)
     sie_bit <= 1'b0;
   else if(iui_regs_inst_sret)
     sie_bit <= spie;
@@ -1988,7 +2066,7 @@ always @(posedge regs_flush_clk or negedge cpurst_b)
 begin
   if(!cpurst_b)
     mepc_reg[62:0] <= 63'b0;
-  else if(rtu_cp0_expt_vld && !mdeleg_vld)
+  else if(rtu_cp0_expt_vld_no_dbg && !mdeleg_vld)
     mepc_reg[62:0] <= rtu_cp0_epc[63:1];
   else if(mepc_local_en)
     mepc_reg[62:0] <= iui_regs_src0[63:1];
@@ -2010,7 +2088,7 @@ always @(posedge regs_flush_clk or negedge cpurst_b)
 begin
   if(!cpurst_b)
     m_intr <= 1'b0;
-  else if(rtu_cp0_expt_vld && !mdeleg_vld)
+  else if(rtu_cp0_expt_vld_no_dbg && !mdeleg_vld)
     m_intr <= rtu_yy_xx_expt_vec[5];
   else if(mcause_local_en)
     m_intr <= iui_regs_src0[63];
@@ -2022,7 +2100,7 @@ always @(posedge regs_flush_clk or negedge cpurst_b)
 begin
   if(!cpurst_b)
     m_vector[4:0] <= 5'b0;
-  else if(rtu_cp0_expt_vld && !mdeleg_vld)
+  else if(rtu_cp0_expt_vld_no_dbg && !mdeleg_vld)
     m_vector[4:0] <= rtu_yy_xx_expt_vec[4:0];
   else if(mcause_local_en)
     m_vector[4:0] <= iui_regs_src0[4:0];
@@ -2040,13 +2118,13 @@ assign mcause_value[63:0]  = {m_intr, 58'b0, m_vector[4:0]};
 //  Providing the trap value register
 //  the definiton for MTVAL register is listed as follows
 //==========================================================
-assign mtval_upd_data[63:0] = rtu_cp0_expt_vld ? rtu_cp0_expt_mtval[63:0]
+assign mtval_upd_data[63:0] = rtu_cp0_expt_vld_no_dbg ? rtu_cp0_expt_mtval[63:0]
                                                : {32'b0, iui_regs_opcode[31:0]};
 always @(posedge regs_flush_clk or negedge cpurst_b)
 begin
   if(!cpurst_b)
     mtval_data[63:0] <= 64'b0;
-  else if((rtu_cp0_expt_vld || iui_regs_inv_expt) && !mdeleg_vld) 
+  else if((rtu_cp0_expt_vld_no_dbg || iui_regs_inv_expt) && !mdeleg_vld) 
     mtval_data[63:0] <= mtval_upd_data[63:0];
   else if(mtval_local_en)
     mtval_data[63:0] <= iui_regs_src0[63:0];
@@ -2319,7 +2397,7 @@ always @(posedge regs_flush_clk or negedge cpurst_b)
 begin
   if(!cpurst_b)
     sepc_reg[62:0] <= 63'b0;
-  else if(rtu_cp0_expt_vld && mdeleg_vld)
+  else if(rtu_cp0_expt_vld_no_dbg && mdeleg_vld)
     sepc_reg[62:0] <= rtu_cp0_epc[63:1];
   else if(sepc_local_en)
     sepc_reg[62:0] <= iui_regs_src0[63:1];
@@ -2341,7 +2419,7 @@ always @(posedge regs_flush_clk or negedge cpurst_b)
 begin
   if(!cpurst_b)
     s_intr <= 1'b0;
-  else if(rtu_cp0_expt_vld && mdeleg_vld)
+  else if(rtu_cp0_expt_vld_no_dbg && mdeleg_vld)
     s_intr <= rtu_yy_xx_expt_vec[5];
   else if(scause_local_en)
     s_intr <= iui_regs_src0[63];
@@ -2353,7 +2431,7 @@ always @(posedge regs_flush_clk or negedge cpurst_b)
 begin
   if(!cpurst_b)
     s_vector[4:0] <= 5'b0;
-  else if(rtu_cp0_expt_vld && mdeleg_vld)
+  else if(rtu_cp0_expt_vld_no_dbg && mdeleg_vld)
     s_vector[4:0] <= rtu_yy_xx_expt_vec[4:0];
   else if(scause_local_en)
     s_vector[4:0] <= iui_regs_src0[4:0];
@@ -2371,13 +2449,13 @@ assign scause_value[63:0] = {s_intr, 58'b0, s_vector[4:0]};
 //  Providing the trap value register
 //  the definiton for STVAL register is listed as follows
 //==========================================================
-assign stval_upd_data[63:0] = rtu_cp0_expt_vld ? rtu_cp0_expt_mtval[63:0]
+assign stval_upd_data[63:0] = rtu_cp0_expt_vld_no_dbg ? rtu_cp0_expt_mtval[63:0]
                                                : {32'b0, iui_regs_opcode[31:0]};
 always @(posedge regs_flush_clk or negedge cpurst_b)
 begin
   if(!cpurst_b)
     stval_data[63:0] <= 64'b0;
-  else if((rtu_cp0_expt_vld || iui_regs_inv_expt) && mdeleg_vld) 
+  else if((rtu_cp0_expt_vld_no_dbg || iui_regs_inv_expt) && mdeleg_vld) 
     stval_data[63:0] <= stval_upd_data[63:0];
   else if(stval_local_en)
     stval_data[63:0] <= iui_regs_src0[63:0];
@@ -2641,12 +2719,12 @@ assign vlenb_value[63:0] = 64'd16; //VLEN 128 bit
 //  Providing the C-SKY Extension Status of the current core
 //  the definiton for MXSTATUS register is listed as follows
 //==========================================================
-assign pm_wen = rtu_cp0_expt_vld
+assign pm_wen = rtu_cp0_expt_vld_no_dbg
                 || iui_regs_inst_mret
                 || iui_regs_inst_sret;
 
 // &CombBeg; @1889
-always @( rtu_cp0_expt_vld
+always @( rtu_cp0_expt_vld_no_dbg
        or pm[1:0]
        or sstatus_spp
        or mpp[1:0]
@@ -2654,9 +2732,9 @@ always @( rtu_cp0_expt_vld
        or mdeleg_vld
        or iui_regs_inst_mret)
 begin
-  if(rtu_cp0_expt_vld && !mdeleg_vld)
+  if(rtu_cp0_expt_vld_no_dbg && !mdeleg_vld)
     pm_wdata[1:0] = 2'b11;
-  else if(rtu_cp0_expt_vld && mdeleg_vld)
+  else if(rtu_cp0_expt_vld_no_dbg && mdeleg_vld)
     pm_wdata[1:0] = 2'b01;
   else if(iui_regs_inst_mret)
     pm_wdata[1:0] = mpp[1:0];
@@ -3791,6 +3869,175 @@ assign hedeleg_value[63:0] = 64'b0;
 assign vsstatus_value[63:0] = 64'b0;
 
 
+//==========================================================
+//                      6. Debug CSR
+//==========================================================
+
+//==========================================================
+//                        Debug Mode
+//==========================================================
+always @(posedge regs_flush_clk or negedge cpurst_b)
+begin
+  if(!cpurst_b) begin
+    debug_mode_q   <= 1'b0;
+  end else if(iui_regs_inst_dret) begin
+    debug_mode_q   <= 1'b0;
+  end else if(rtu_cp0_expt_vld_dbg) begin
+    debug_mode_q   <= 1'b1;
+  end else if(debug_req_i) begin
+    debug_mode_q   <= 1'b1;
+  end else begin
+    debug_mode_q   <= debug_mode_q;
+  end
+end
+
+//==========================================================
+//               Define the DCSR register
+//==========================================================
+
+assign debug_exception_en       = rtu_yy_xx_expt_vec[4:0] == 5'd24;
+assign rtu_cp0_expt_vld_no_dbg  = rtu_cp0_expt_vld && !debug_exception_en;
+assign rtu_cp0_expt_vld_dbg     = rtu_cp0_expt_vld && debug_exception_en;
+
+always @(posedge regs_clk or negedge cpurst_b)
+begin
+  if(!cpurst_b)
+  begin
+    dcsr_extcause  <= 3'b0;
+    dcsr_cetrig    <= 1'b0;
+    dcsr_ebreakvs  <= 1'b0;
+    dcsr_ebreakvu  <= 1'b0;
+    dcsr_ebreakm   <= 1'b0;
+    dcsr_ebreaks   <= 1'b0;
+    dcsr_ebreaku   <= 1'b0;
+    dcsr_stepie    <= 1'b0;
+    dcsr_mprven    <= 1'b0;
+    dcsr_step      <= 1'b0;
+  end
+  else if(dcsr_local_en)
+  begin
+    dcsr_extcause  <= iui_regs_src0[26:24];
+    dcsr_cetrig    <= iui_regs_src0[19];
+    dcsr_ebreakvs  <= iui_regs_src0[17];
+    dcsr_ebreakvu  <= iui_regs_src0[16];
+    dcsr_ebreakm   <= iui_regs_src0[15];
+    dcsr_ebreaks   <= iui_regs_src0[13];
+    dcsr_ebreaku   <= iui_regs_src0[12];
+    dcsr_stepie    <= iui_regs_src0[11];
+    dcsr_mprven    <= iui_regs_src0[4];
+    dcsr_step      <= iui_regs_src0[2];
+  end
+  else
+  begin
+    dcsr_extcause  <= dcsr_extcause;
+    dcsr_cetrig    <= dcsr_cetrig;
+    dcsr_ebreakvs  <= dcsr_ebreakvs;
+    dcsr_ebreakvu  <= dcsr_ebreakvu;
+    dcsr_ebreakm   <= dcsr_ebreakm;
+    dcsr_ebreaks   <= dcsr_ebreaks;
+    dcsr_ebreaku   <= dcsr_ebreaku;
+    dcsr_stepie    <= dcsr_stepie;
+    dcsr_mprven    <= dcsr_mprven;
+    dcsr_step      <= dcsr_step;
+  end
+end
+
+assign dcsr_debugver  = 4'h4;
+assign dcsr_stopcount = 1'b0;
+assign dcsr_stoptime  = 1'b0;
+assign dcsr_nmip      = 1'b0;
+                                           
+always @(posedge regs_flush_clk or negedge cpurst_b)
+begin
+  if(!cpurst_b) begin
+    dcsr_cause     <= 3'b0;
+    dcsr_v         <= 1'b0;
+    dcsr_prv       <= 2'b0;
+  end else if(dcsr_local_en) begin
+    dcsr_cause     <= iui_regs_src0[8:6];
+    dcsr_v         <= iui_regs_src0[5];
+    dcsr_prv       <= iui_regs_src0[1:0];
+  end else if(rtu_cp0_expt_vld_dbg) begin
+    dcsr_cause     <= CauseRequest;
+    dcsr_v         <= v;
+    dcsr_prv       <= pm[1:0];
+  end else if(is_vld_ebreak_inst_i && !debug_mode_q) begin
+    dcsr_cause     <= CauseBreakpoint;
+    dcsr_v         <= v;
+    dcsr_prv       <= pm[1:0];
+  end else begin
+    dcsr_cause     <= dcsr_cause;
+    dcsr_v         <= dcsr_v;
+    dcsr_prv       <= dcsr_prv;
+  end
+end
+
+assign dcsr_value[63:0]  = {dcsr_debugver, 1'b0, dcsr_extcause, 4'b0, dcsr_cetrig, 1'b0,
+                            dcsr_ebreakvs, dcsr_ebreakvu, dcsr_ebreakm, 1'b0,
+                            dcsr_ebreaks, dcsr_ebreaku, dcsr_stepie, dcsr_stopcount, dcsr_stoptime,
+                            dcsr_cause, dcsr_v, dcsr_mprven, dcsr_nmip, dcsr_step, dcsr_prv};
+
+assign dcsr_value_o[63:0] = dcsr_value[63:0];
+
+//==========================================================
+//               Define the DPC register
+//==========================================================
+always @(posedge regs_flush_clk or negedge cpurst_b)
+begin
+  if(!cpurst_b) begin
+    dpc_value      <= 64'b0;
+  end else if(dpc_local_en) begin
+    dpc_value      <= iui_regs_src0[63:0];
+  end else if(rtu_cp0_expt_vld_dbg) begin
+    dpc_value      <= {rtu_cp0_epc[63:1], 1'b0};
+  end else if(is_vld_ebreak_inst_i && !debug_mode_q) begin
+    dpc_value      <= {rtu_cp0_epc[63:1], 1'b0};
+  end else begin
+    dpc_value      <= dpc_value;
+  end
+end
+
+//==========================================================
+//              Define the DSCRATCH0 register
+//==========================================================
+always @(posedge regs_clk or negedge cpurst_b)
+begin
+  if(!cpurst_b)
+  begin
+    dscratch0_value <= 64'b0;
+  end
+  else if(dscratch0_local_en)
+  begin
+    dscratch0_value <= iui_regs_src0[63:0];
+  end
+  else
+  begin
+    dscratch0_value <= dscratch0_value;
+  end
+end
+
+
+//==========================================================
+//              Define the DSCRATCH1 register
+//==========================================================
+always @(posedge regs_clk or negedge cpurst_b)
+begin
+  if(!cpurst_b)
+  begin
+    dscratch1_value <= 64'b0;
+  end
+  else if(dscratch1_local_en)
+  begin
+    dscratch1_value <= iui_regs_src0[63:0];
+  end
+  else
+  begin
+    dscratch1_value <= dscratch1_value;
+  end
+end
+
+
+
 
 //==========================================================
 // select regs depending on the implementation location
@@ -3902,7 +4149,11 @@ always @( vlenb_value[63:0]
        or mcor_value[63:0]
        or fxcr_value[63:0]
        or vstart_value[63:0]
-       or mwmsr_value[63:0])
+       or mwmsr_value[63:0]
+       or dcsr_value[63:0]
+       or dpc_value[63:0]
+       or dscratch0_value[63:0]
+       or dscratch1_value[63:0])
 begin
   case(iui_regs_addr[11:0])
     MVENDORID : data_out[63:0] = mvendorid_value[63:0];
@@ -3978,6 +4229,11 @@ begin
 
     VSSTATUS  : data_out[63:0] = vsstatus_value[63:0];
 
+    DCSR      : data_out[63:0] = dcsr_value[63:0];
+    DPC       : data_out[63:0] = dpc_value[63:0];
+    DSCRATCH0 : data_out[63:0] = dscratch0_value[63:0];
+    DSCRATCH1 : data_out[63:0] = dscratch1_value[63:0];
+
     default   : data_out[63:0] = 64'b0; 
   endcase
 // &CombEnd; @3742
@@ -3991,6 +4247,7 @@ assign regs_iui_tsr     = tsr;
 assign regs_iui_tw      = tw;
 assign regs_iui_tvm     = tvm;
 assign regs_iui_pm[1:0] = pm[1:0];
+assign regs_iui_d       = debug_mode_q;
 assign regs_iui_v       = v;
 assign regs_iui_cskyee  = cskyisaee;
 
@@ -4175,9 +4432,10 @@ assign cp0_idu_icg_en = local_icg_en[1];
 //              Generate output to IU
 //==========================================================
 // Exception Related Information
-assign cp0_iu_ex3_efpc[38:0]  = cp0_mret ? mepc_value[39:1]
+assign cp0_iu_ex3_efpc[38:0]  = cp0_dret ? dpc_value[39:1] :
+                                cp0_mret ? mepc_value[39:1]
                                          : sepc_value[39:1];
-assign cp0_iu_ex3_efpc_vld    = cp0_mret || cp0_sret;
+assign cp0_iu_ex3_efpc_vld    = cp0_mret || cp0_sret || cp0_dret;
 
 assign cp0_iu_div_entry_disable = div_entry_dis;
 assign cp0_iu_div_entry_disable_clr = div_entry_dis && mhint2_local_en && !iui_regs_src0[11];
@@ -4366,7 +4624,8 @@ assign regs_iui_wdata[63:0] = {32'b0, cindex_rid[3:0], 3'b0, cindex_way[3:0], ci
 
 // Local ICG Enable
 assign cp0_biu_icg_en     = local_icg_en[5];
-assign cp0_xx_core_icg_en = local_icg_en[8];
+// assign cp0_xx_core_icg_en = local_icg_en[8];
+assign cp0_xx_core_icg_en = 1'b1; // there is a timing loop here, cut it by tire 1
 
 //==========================================================
 //              Generate output to RTU

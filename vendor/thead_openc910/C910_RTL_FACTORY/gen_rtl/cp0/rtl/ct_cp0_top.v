@@ -232,7 +232,15 @@ module ct_cp0_top(
   rtu_yy_xx_commit0_iid,
   rtu_yy_xx_dbgon,
   rtu_yy_xx_expt_vec,
-  rtu_yy_xx_flush
+  rtu_yy_xx_flush,
+
+  // debug request
+  debug_req_i,
+  // is in debug mode
+  debug_mode_o,
+  // dcsr to ct_rtu_retire
+  dcsr_value_o,
+  is_vld_ebreak_inst_i
 );
 
 // &Ports; @25
@@ -306,6 +314,9 @@ input   [6  :0]  rtu_yy_xx_commit0_iid;
 input            rtu_yy_xx_dbgon;                
 input   [5  :0]  rtu_yy_xx_expt_vec;             
 input            rtu_yy_xx_flush;                
+// debug request
+input            debug_req_i;
+
 output           cp0_biu_icg_en;                 
 output  [1  :0]  cp0_biu_lpmd_b;                 
 output  [15 :0]  cp0_biu_op;                     
@@ -456,6 +467,12 @@ output           cp0_yy_dcache_pref_en;
 output           cp0_yy_hyper;                   
 output  [1  :0]  cp0_yy_priv_mode;               
 output           cp0_yy_virtual_mode;            
+// is in debug mode
+output           debug_mode_o;
+// dcsr to ct_rtu_retire
+output  [63 :0]  dcsr_value_o;
+input            is_vld_ebreak_inst_i;
+
 
 // &Regs; @26
 
@@ -602,6 +619,7 @@ wire             cp0_mmu_tlb_all_inv;
 wire    [63 :0]  cp0_mmu_wdata;                  
 wire             cp0_mmu_wreg;                   
 wire             cp0_mret;                       
+wire             cp0_dret;                       
 wire    [63 :0]  cp0_pad_mstatus;                
 wire             cp0_pmp_icg_en;                 
 wire    [1  :0]  cp0_pmp_mpp;                    
@@ -658,6 +676,7 @@ wire             iui_regs_csrw;
 wire             iui_regs_ex3_inst_csr;          
 wire             iui_regs_inst_mret;             
 wire             iui_regs_inst_sret;             
+wire             iui_regs_inst_dret;
 wire             iui_regs_inv_expt;              
 wire    [31 :0]  iui_regs_opcode;                
 wire    [63 :0]  iui_regs_ori_src0;              
@@ -692,6 +711,7 @@ wire             regs_iui_hpcp_scr_inv;
 wire    [14 :0]  regs_iui_int_sel;               
 wire             regs_iui_l2_regs_sel;           
 wire    [1  :0]  regs_iui_pm;                    
+wire             regs_iui_d;
 wire    [3  :0]  regs_iui_reg_idx;               
 wire             regs_iui_scnt_inv;              
 wire             regs_iui_tee_ff;                
@@ -725,8 +745,13 @@ wire    [6  :0]  rtu_yy_xx_commit0_iid;
 wire             rtu_yy_xx_dbgon;                
 wire    [5  :0]  rtu_yy_xx_expt_vec;             
 wire             rtu_yy_xx_flush;                
-
-
+// debug request
+wire             debug_req_i;
+// is in debug mode
+wire             debug_mode_o;
+// dcsr to ct_rtu_retire
+wire    [63 :0]  dcsr_value_o;
+wire             is_vld_ebreak_inst_i;
 
 // &Force ("output","cp0_yy_clk_en"); @30
 
@@ -753,6 +778,7 @@ ct_cp0_iui  x_ct_cp0_iui (
   .cp0_iu_ex3_rslt_vld     (cp0_iu_ex3_rslt_vld    ),
   .cp0_mmu_tlb_all_inv     (cp0_mmu_tlb_all_inv    ),
   .cp0_mret                (cp0_mret               ),
+  .cp0_dret                (cp0_dret               ),
   .cp0_rtu_xx_int_b        (cp0_rtu_xx_int_b       ),
   .cp0_rtu_xx_vec          (cp0_rtu_xx_vec         ),
   .cp0_sret                (cp0_sret               ),
@@ -777,6 +803,7 @@ ct_cp0_iui  x_ct_cp0_iui (
   .iui_regs_ex3_inst_csr   (iui_regs_ex3_inst_csr  ),
   .iui_regs_inst_mret      (iui_regs_inst_mret     ),
   .iui_regs_inst_sret      (iui_regs_inst_sret     ),
+  .iui_regs_inst_dret      (iui_regs_inst_dret     ),
   .iui_regs_inv_expt       (iui_regs_inv_expt      ),
   .iui_regs_opcode         (iui_regs_opcode        ),
   .iui_regs_ori_src0       (iui_regs_ori_src0      ),
@@ -803,6 +830,7 @@ ct_cp0_iui  x_ct_cp0_iui (
   .regs_iui_int_sel        (regs_iui_int_sel       ),
   .regs_iui_l2_regs_sel    (regs_iui_l2_regs_sel   ),
   .regs_iui_pm             (regs_iui_pm            ),
+  .regs_iui_d              (regs_iui_d             ),
   .regs_iui_reg_idx        (regs_iui_reg_idx       ),
   .regs_iui_scnt_inv       (regs_iui_scnt_inv      ),
   .regs_iui_tee_ff         (regs_iui_tee_ff        ),
@@ -941,6 +969,7 @@ ct_cp0_regs  x_ct_cp0_regs (
   .cp0_mmu_wdata                   (cp0_mmu_wdata                  ),
   .cp0_mmu_wreg                    (cp0_mmu_wreg                   ),
   .cp0_mret                        (cp0_mret                       ),
+  .cp0_dret                        (cp0_dret                       ),
   .cp0_pad_mstatus                 (cp0_pad_mstatus                ),
   .cp0_pmp_icg_en                  (cp0_pmp_icg_en                 ),
   .cp0_pmp_mpp                     (cp0_pmp_mpp                    ),
@@ -982,6 +1011,7 @@ ct_cp0_regs  x_ct_cp0_regs (
   .iui_regs_ex3_inst_csr           (iui_regs_ex3_inst_csr          ),
   .iui_regs_inst_mret              (iui_regs_inst_mret             ),
   .iui_regs_inst_sret              (iui_regs_inst_sret             ),
+  .iui_regs_inst_dret              (iui_regs_inst_dret             ),
   .iui_regs_inv_expt               (iui_regs_inv_expt              ),
   .iui_regs_opcode                 (iui_regs_opcode                ),
   .iui_regs_ori_src0               (iui_regs_ori_src0              ),
@@ -1009,6 +1039,7 @@ ct_cp0_regs  x_ct_cp0_regs (
   .regs_iui_int_sel                (regs_iui_int_sel               ),
   .regs_iui_l2_regs_sel            (regs_iui_l2_regs_sel           ),
   .regs_iui_pm                     (regs_iui_pm                    ),
+  .regs_iui_d                      (regs_iui_d                     ),
   .regs_iui_reg_idx                (regs_iui_reg_idx               ),
   .regs_iui_scnt_inv               (regs_iui_scnt_inv              ),
   .regs_iui_tee_ff                 (regs_iui_tee_ff                ),
@@ -1038,9 +1069,16 @@ ct_cp0_regs  x_ct_cp0_regs (
   .rtu_cp0_vstart                  (rtu_cp0_vstart                 ),
   .rtu_cp0_vstart_vld              (rtu_cp0_vstart_vld             ),
   .rtu_yy_xx_expt_vec              (rtu_yy_xx_expt_vec             ),
-  .rtu_yy_xx_flush                 (rtu_yy_xx_flush                )
+  .rtu_yy_xx_flush                 (rtu_yy_xx_flush                ),
+
+  // debug request
+  .debug_req_i                     (debug_req_i                    ),
+  // dcsr to ct_rtu_retire
+  .dcsr_value_o                    (dcsr_value_o                   ),
+  .is_vld_ebreak_inst_i            (is_vld_ebreak_inst_i           )
 );
 
+assign debug_mode_o = regs_iui_d;
 
 // &Instance("ct_cp0_lpmd", "x_ct_cp0_lpmd"); @36
 ct_cp0_lpmd  x_ct_cp0_lpmd (
