@@ -583,6 +583,12 @@ begin
       decd_32_func[4:0]                    = 5'b01010;
       decd_32_sel[ALU_SEL-1:0]             = NON_ALU;
       end
+    15'b011110100011100:begin //dret
+      //like mret
+      decd_32_eu_sel[EU_WIDTH-1:0]         = CP0;
+      decd_32_func[4:0]                    = 5'b01011;
+      decd_32_sel[ALU_SEL-1:0]             = NON_ALU;
+    end
     15'b???????00111100:begin //csrrw
       //deal in fence
       decd_32_eu_sel[EU_WIDTH-1:0]         = CP0;
