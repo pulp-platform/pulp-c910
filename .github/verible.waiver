@@ -1,0 +1,6 @@
+# Copyright 2025 ETH Zurich and University of Bologna.
+# Licensed under the Apache License, Version 2.0, see LICENSE for details.
+# SPDX-License-Identifier: Apache-2.0
+
+# Stick to all caps localparam names to match AXI
+waive --rule=parameter-name-style --location="hw/axi_burst_undec.sv"
