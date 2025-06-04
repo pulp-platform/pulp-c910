@@ -34,6 +34,18 @@ This repository adapts the original XuanTie C910 core to make it fully compatibl
 
 ---
 
+## Full-System Integration with Cheshire
+
+For full system support, including hardware and software integration, FPGA bitstream generation, and Linux boot, please refer to the Cheshire integration branch: [Cheshire C910 Integration](https://github.com/pulp-platform/cheshire/tree/zx/c910_preopen)
+
+This branch demonstrates how the PULP C910 core is integrated into the Cheshire SoC, featuring:
+
+- Standard RISC-V debug, interrupt, and memory interfaces  
+- Bootable Linux on FPGA (e.g., Xilinx VCU128)  
+- Full-stack compatibility with the PULP toolchain and SDK
+
+---
+
 ## License
 
 <!-- Licensing information -->
