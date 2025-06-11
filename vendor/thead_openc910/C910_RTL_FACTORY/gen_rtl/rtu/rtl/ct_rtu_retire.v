@@ -324,7 +324,15 @@ module ct_rtu_retire(
   rtu_yy_xx_dbgon,
   rtu_yy_xx_expt_vec,
   rtu_yy_xx_flush,
-  rtu_yy_xx_retire0_normal
+  rtu_yy_xx_retire0_normal,
+
+  cp0_yy_priv_mode_i,
+  cp0_yy_virtual_mode_i,
+  // dcsr to ct_rtu_retire
+  dcsr_value_i,
+  // is in debug mode
+  debug_mode_i,
+  is_vld_ebreak_inst_o
 );
 
 // &Ports; @30
@@ -369,7 +377,7 @@ input   [38:0]  rob_retire_inst0_cur_pc;
 input           rob_retire_inst0_data_bkpt;          
 input           rob_retire_inst0_dbg_disable;        
 input           rob_retire_inst0_efpc_vld;           
-input   [3 :0]  rob_retire_inst0_expt_vec;           
+input   [4 :0]  rob_retire_inst0_expt_vec;           
 input           rob_retire_inst0_expt_vld;           
 input           rob_retire_inst0_fp_dirty;           
 input           rob_retire_inst0_high_hw_expt;       
@@ -639,6 +647,14 @@ output  [5 :0]  rtu_yy_xx_expt_vec;
 output          rtu_yy_xx_flush;                     
 output          rtu_yy_xx_retire0_normal;            
 
+input   [1 :0]  cp0_yy_priv_mode_i;
+input           cp0_yy_virtual_mode_i;
+// dcsr to ct_rtu_retire
+input   [63 :0]  dcsr_value_i;
+// is in debug mode
+input            debug_mode_i;
+output           is_vld_ebreak_inst_o;
+
 // &Regs; @31
 reg     [1 :0]  ae_cur_state;                        
 reg     [1 :0]  ae_next_state;                       
@@ -819,7 +835,7 @@ wire    [38:0]  rob_retire_inst0_cur_pc;
 wire            rob_retire_inst0_data_bkpt;          
 wire            rob_retire_inst0_dbg_disable;        
 wire            rob_retire_inst0_efpc_vld;           
-wire    [3 :0]  rob_retire_inst0_expt_vec;           
+wire    [4 :0]  rob_retire_inst0_expt_vec;           
 wire            rob_retire_inst0_expt_vld;           
 wire            rob_retire_inst0_fp_dirty;           
 wire            rob_retire_inst0_high_hw_expt;       
@@ -1059,7 +1075,16 @@ wire            rtu_yy_xx_flush;
 wire            rtu_yy_xx_retire0_normal;            
 wire            sm_clk;                              
 wire            sm_clk_en;                           
-
+wire    [1 :0]  cp0_yy_priv_mode_i;
+wire            cp0_yy_virtual_mode_i;
+// dcsr to ct_rtu_retire
+wire    [63 :0] dcsr_value_i;
+// is in debug mode
+wire            debug_mode_i;
+wire            is_vld_ebreak_inst_o;
+wire            is_ebreak_inst;
+reg             is_vld_ebreak_inst;
+wire            rob_retire_inst0_expt_vld_checked_dcsr;
 
 
 //==========================================================
@@ -1157,9 +1182,47 @@ assign rtu_idu_srt_en    = retire_srt_en;
 //==========================================================
 //                   Retire valid signals
 //==========================================================
+// for ebreak inst, if it is effictive depends on the dcsr
+assign is_ebreak_inst = rob_retire_inst0_expt_vld
+                        && (rob_retire_inst0_expt_vec[4:0] == 5'd3);
+
+always @(is_ebreak_inst
+      or cp0_yy_priv_mode_i
+      or cp0_yy_virtual_mode_i
+      or dcsr_value_i)
+begin
+  is_vld_ebreak_inst = 1'b0;
+  if(!debug_mode_i) begin
+    if(is_ebreak_inst) begin
+      case(cp0_yy_priv_mode_i[1:0])
+        2'b11: begin // M mode
+          is_vld_ebreak_inst = dcsr_value_i[15]; // ebreakm
+        end
+        2'b01: begin // S mode
+          is_vld_ebreak_inst = cp0_yy_virtual_mode_i ? dcsr_value_i[17] : dcsr_value_i[13]; // ebreakvs or ebreaks
+        end
+        2'b00: begin // U mode
+          is_vld_ebreak_inst = cp0_yy_virtual_mode_i ? dcsr_value_i[16] : dcsr_value_i[12]; // ebreakvu or ebreaku
+        end
+        default:;
+      endcase
+    end
+  end else begin
+    if(is_ebreak_inst) begin
+      is_vld_ebreak_inst = 1'b1;
+    end
+  end
+end
+
+assign is_vld_ebreak_inst_o = is_vld_ebreak_inst;
+
+assign rob_retire_inst0_expt_vld_checked_dcsr = is_ebreak_inst ? 
+                                                is_vld_ebreak_inst :
+                                                rob_retire_inst0_expt_vld;
+
 //retire inst 0 may expt vld, but retire inst 1/2 are always normal
 assign retire_inst0_normal_retire     = rob_retire_inst0_vld
-                                        && !rob_retire_inst0_expt_vld;
+                                        && !rob_retire_inst0_expt_vld_checked_dcsr;
 assign retire_inst1_normal_retire     = rob_retire_inst1_vld;
 assign retire_inst2_normal_retire     = rob_retire_inst2_vld;
 
@@ -1188,8 +1251,8 @@ assign retire_pst_wb_retire_inst2_ereg_vld = rob_retire_inst2_pst_ereg_vld;
 //----------------------------------------------------------
 //                 Prepare Exception Source
 //----------------------------------------------------------
-assign retire_expt_inst          = rob_retire_inst0_expt_vld;
-assign retire_expt_mmu_bad_vpn   = rob_retire_inst0_expt_vld
+assign retire_expt_inst          = rob_retire_inst0_expt_vld_checked_dcsr;
+assign retire_expt_mmu_bad_vpn   = rob_retire_inst0_expt_vld_checked_dcsr
                                    && (rob_retire_inst0_expt_vec[3:2] == 2'b11);
 
 //----------------------------------------------------------
@@ -1204,7 +1267,7 @@ assign retire_expt_int           = rob_retire_inst0_int_vld
 //----------------------------------------------------------
 assign retire_expt_vec[5:0] = (retire_expt_int)
                               ? {1'b1, rob_retire_inst0_int_vec[4:0]}
-                              : {2'b0, rob_retire_inst0_expt_vec[3:0]};
+                              : {1'b0, rob_retire_inst0_expt_vec[4:0]};
 
 //----------------------------------------------------------
 //                         MTVAL
@@ -1312,7 +1375,7 @@ assign rtu_cp0_expt_gateclk_vld = retire_expt_gateclk_vld
 
 assign rtu_cp0_expt_mtval[63:0] = retire_expt_mtval[63:0];
 
-assign retire_inst0_epc[38:0]  = (rob_retire_inst0_expt_vld
+assign retire_inst0_epc[38:0]  = (rob_retire_inst0_expt_vld_checked_dcsr
                                   || rob_retire_inst0_inst_bkpt)
                                  ? rob_retire_inst0_cur_pc[38:0]
                                  : rob_retire_inst0_next_pc[38:0];
@@ -1674,7 +1737,7 @@ assign rtu_had_xx_dbg_ack_pc                 = dbgreq_ack;
 assign rtu_had_dbg_ack_info                  = dbgreq_ack_jdbreq
                                                && !ifu_dbg_mode_on;
 //assign rtu_had_xx_pc[38:0]                   = retire_inst0_epc[38:0];
-assign rtu_had_xx_pc[38:0]                   = (rob_retire_inst0_expt_vld
+assign rtu_had_xx_pc[38:0]                   = (rob_retire_inst0_expt_vld_checked_dcsr
                                                 || rob_retire_inst0_inst_bkpt)
                                                ? rob_retire_inst0_cur_pc[38:0]
                                                : rob_retire_rob_cur_pc[38:0];

@@ -465,7 +465,15 @@ module ct_rtu_top(
   vfpu_rtu_pipe6_cmplt,
   vfpu_rtu_pipe6_iid,
   vfpu_rtu_pipe7_cmplt,
-  vfpu_rtu_pipe7_iid
+  vfpu_rtu_pipe7_iid,
+
+  cp0_yy_priv_mode_i,
+  cp0_yy_virtual_mode_i,
+  // dcsr to ct_rtu_retire
+  dcsr_value_i,
+  // is in debug mode
+  debug_mode_i,
+  is_vld_ebreak_inst_o
 );
 
 // &Ports; @25
@@ -923,6 +931,14 @@ output           rtu_yy_xx_retire0_normal;
 output           rtu_yy_xx_retire1;                   
 output           rtu_yy_xx_retire2;                   
 
+input   [1  :0] cp0_yy_priv_mode_i;
+input           cp0_yy_virtual_mode_i;
+// dcsr to ct_rtu_retire
+input   [63 :0]  dcsr_value_i;
+// is in debug mode
+input            debug_mode_i;
+output           is_vld_ebreak_inst_o;
+
 // &Regs; @26
 
 // &Wires; @27
@@ -1187,7 +1203,7 @@ wire    [38 :0]  rob_retire_inst0_cur_pc;
 wire             rob_retire_inst0_data_bkpt;          
 wire             rob_retire_inst0_dbg_disable;        
 wire             rob_retire_inst0_efpc_vld;           
-wire    [3  :0]  rob_retire_inst0_expt_vec;           
+wire    [4  :0]  rob_retire_inst0_expt_vec;           
 wire             rob_retire_inst0_expt_vld;           
 wire             rob_retire_inst0_fp_dirty;           
 wire             rob_retire_inst0_high_hw_expt;       
@@ -1546,6 +1562,14 @@ wire    [6  :0]  vfpu_rtu_pipe6_iid;
 wire             vfpu_rtu_pipe7_cmplt;                
 wire    [6  :0]  vfpu_rtu_pipe7_iid;                  
 
+wire    [1  :0]  cp0_yy_priv_mode_i;
+wire             cp0_yy_virtual_mode_i;
+// dcsr to ct_rtu_retire
+wire    [63 :0]  dcsr_value_i;
+// is in debug mode
+wire             debug_mode_i;
+
+wire             is_vld_ebreak_inst_o;
 
 
 //==========================================================
@@ -2441,7 +2465,15 @@ ct_rtu_retire  x_ct_rtu_retire (
   .rtu_yy_xx_dbgon                      (rtu_yy_xx_dbgon                     ),
   .rtu_yy_xx_expt_vec                   (rtu_yy_xx_expt_vec                  ),
   .rtu_yy_xx_flush                      (rtu_yy_xx_flush                     ),
-  .rtu_yy_xx_retire0_normal             (rtu_yy_xx_retire0_normal            )
+  .rtu_yy_xx_retire0_normal             (rtu_yy_xx_retire0_normal            ),
+
+  .cp0_yy_priv_mode_i                   (cp0_yy_priv_mode_i                  ),
+  .cp0_yy_virtual_mode_i                (cp0_yy_virtual_mode_i               ),
+  // dcsr to ct_rtu_retire
+  .dcsr_value_i                         (dcsr_value_i                        ),
+  // is in debug mode
+  .debug_mode_i                         (debug_mode_i                        ),
+  .is_vld_ebreak_inst_o                 (is_vld_ebreak_inst_o                )
 );
 
 

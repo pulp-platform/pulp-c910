@@ -77,7 +77,12 @@ module ct_idu_id_dp(
   pad_yy_icg_scan_en,
   rtu_idu_flush_fe,
   split_long_ctrl_id_stall,
-  split_long_ctrl_inst_vld
+  split_long_ctrl_inst_vld,
+
+  // debug request
+  debug_req_i,
+  // is in debug mode
+  debug_mode_i
 );
 
 // &Ports; @28
@@ -113,6 +118,11 @@ input            ifu_idu_ib_pipedown_gateclk;
 input            iu_yy_xx_cancel;                
 input            pad_yy_icg_scan_en;             
 input            rtu_idu_flush_fe;               
+// debug request
+input            debug_req_i;
+// is in debug mode
+input            debug_mode_i;
+
 output           dp_ctrl_id_inst0_fence;         
 output           dp_ctrl_id_inst0_normal;        
 output           dp_ctrl_id_inst0_split_long;    
@@ -409,7 +419,17 @@ wire    [177:0]  split_short1_dp_inst1_data;
 wire    [3  :0]  split_short2_dp_dep_info;       
 wire    [177:0]  split_short2_dp_inst0_data;     
 wire    [177:0]  split_short2_dp_inst1_data;     
-
+// debug request
+wire             debug_req_i;
+wire             debug_req_rdy;
+wire             debug_req_i_hsk;
+reg              debug_req_pending_q;
+wire             debug_req_pending_d;
+wire             debug_req_pending_q_hsk;
+wire             debug_req_pending_set, debug_req_pending_clr;
+wire             debug_req_pending_en;
+// is in debug mode
+wire             debug_mode_i;
 
 
 //==========================================================
@@ -1174,11 +1194,35 @@ end
 //----------------------------------------------------------
 //            normal expt inst expt data select
 //----------------------------------------------------------
+// debug request handling, it need to be assigned to a instruction, if there is no valid instruction at id stage, wait until there is one
+assign debug_req_rdy  = ctrl_dp_id_inst0_vld & 
+                        ~id_inst0_data[ID_EXPT_VLD] & 
+                        ~dp_ctrl_id_inst0_fence &
+                        ~ctrl_dp_id_inst1_vld &
+                        ~ctrl_dp_id_inst2_vld;
+assign debug_req_i_hsk       = debug_req_i &  debug_req_rdy & ~debug_mode_i;
+assign debug_req_pending_set = debug_req_i & ~debug_req_rdy & ~debug_mode_i;
+assign debug_req_pending_clr = debug_req_pending_q_hsk;
+assign debug_req_pending_d   = debug_req_pending_set | ~debug_req_pending_clr;
+assign debug_req_pending_en  = debug_req_pending_set | debug_req_pending_clr;
+assign debug_req_pending_q_hsk = debug_req_pending_q & debug_req_rdy;
+always @(posedge forever_cpuclk or negedge cpurst_b) begin
+  if(~cpurst_b) begin
+    debug_req_pending_q <= 1'b0;
+  end else begin
+    if(debug_req_pending_en) begin
+      debug_req_pending_q <= debug_req_pending_d;
+    end
+  end
+end
+
 //ifu expt inst, illegal and bkpt treat as normal inst
 //add control path for power optimization
 assign id_expt_inst0_expt_vld      = ctrl_dp_id_inst0_vld
                                      && (id_inst0_data[ID_EXPT_VLD]
-                                      || id_inst0_illegal);
+                                      || id_inst0_illegal
+                                      || debug_req_i_hsk
+                                      || debug_req_pending_q_hsk);
 assign id_expt_inst1_expt_vld      = ctrl_dp_id_inst1_vld
                                      && (id_inst1_data[ID_EXPT_VLD]
                                       || id_inst1_illegal);
@@ -1194,11 +1238,15 @@ assign id_expt_inst2_high_hw_expt  = id_inst2_data[ID_EXPT_VLD]
                                      && id_inst2_data[ID_HIGH_HW_EXPT];
 
 // &CombBeg; @526
-always @( id_inst0_data[36:32])
+always @( id_inst0_data[36:32]
+       or debug_req_i_hsk
+       or debug_req_pending_q_hsk)
 begin
-  if(id_inst0_data[ID_EXPT_VLD])
+  if(id_inst0_data[ID_EXPT_VLD]) // ecc error exception from ifu
     id_expt_inst0_expt_vec[4:0]    = {1'b0,id_inst0_data[ID_EXPT_VEC:ID_EXPT_VEC-3]};
-  else //illegal
+  else if(debug_req_i_hsk || debug_req_pending_q_hsk)
+    id_expt_inst0_expt_vec[4:0]    = 5'd24; // according to riscv privileged spec, the exception code 24 is designated for custom use, cva6 also uses this code
+  else // illegal instruction from idu
     id_expt_inst0_expt_vec[4:0]    = 5'd2;
 // &CombEnd; @531
 end

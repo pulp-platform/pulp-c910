@@ -479,7 +479,10 @@ module ct_core #(
   rtu_yy_xx_retire0,
   rtu_yy_xx_retire0_normal,
   rtu_yy_xx_retire1,
-  rtu_yy_xx_retire2
+  rtu_yy_xx_retire2,
+
+  // debug request
+  debug_req_i
 );
 
 //&Ports("compare", "../../../gen_rtl/cpu/rtl/core_golden_port.v");
@@ -616,6 +619,9 @@ input            mmu_yy_xx_no_op;
 input            pad_yy_icg_scan_en;                     
 input            pad_yy_scan_mode;                       
 input   [63 :0]  pmp_cp0_data;                           
+// debug request
+input            debug_req_i;
+
 output           cp0_biu_icg_en;                         
 output  [1  :0]  cp0_biu_lpmd_b;                         
 output  [15 :0]  cp0_biu_op;                             
@@ -2470,7 +2476,13 @@ wire             vfpu_rtu_pipe6_cmplt;
 wire    [6  :0]  vfpu_rtu_pipe6_iid;                     
 wire             vfpu_rtu_pipe7_cmplt;                   
 wire    [6  :0]  vfpu_rtu_pipe7_iid;                     
-
+// debug request
+wire             debug_req_i;
+// is in debug mode
+wire             debug_mode;
+// dcsr to ct_rtu_retire
+wire    [63 :0]  dcsr_value;
+wire             is_vld_ebreak_inst;
 
 // &Force("input", "pad_yy_scan_mode"); @32
 // &Force("output","rtu_yy_xx_dbgon"); @33
@@ -3473,7 +3485,12 @@ ct_idu_top  x_ct_idu_top (
   .vfpu_idu_pipe6_vmla_srcv2_no_fwd        (vfpu_idu_pipe6_vmla_srcv2_no_fwd       ),
   .vfpu_idu_pipe7_vmla_srcv2_no_fwd        (vfpu_idu_pipe7_vmla_srcv2_no_fwd       ),
   .vfpu_idu_vdiv_busy                      (vfpu_idu_vdiv_busy                     ),
-  .vfpu_idu_vdiv_wb_stall                  (vfpu_idu_vdiv_wb_stall                 )
+  .vfpu_idu_vdiv_wb_stall                  (vfpu_idu_vdiv_wb_stall                 ),
+
+  // debug request
+  .debug_req_i                             (debug_req_i                            ),
+  // is in debug mode
+  .debug_mode_i                            (debug_mode                             )
 );
 
 // &Connect(.cpurst_b   (idu_rst_b)); @52
@@ -4501,14 +4518,14 @@ ct_cp0_top  x_ct_cp0_top (
   .biu_cp0_apb_base                (biu_cp0_apb_base               ),
   .biu_cp0_cmplt                   (biu_cp0_cmplt                  ),
   .biu_cp0_coreid                  (biu_cp0_coreid                 ),
-  .biu_cp0_me_int                  (biu_cp0_me_int                 ),
-  .biu_cp0_ms_int                  (biu_cp0_ms_int                 ),
-  .biu_cp0_mt_int                  (biu_cp0_mt_int                 ),
+  .biu_cp0_me_int                  (biu_cp0_me_int & ~debug_mode   ),
+  .biu_cp0_ms_int                  (biu_cp0_ms_int & ~debug_mode   ),
+  .biu_cp0_mt_int                  (biu_cp0_mt_int & ~debug_mode   ),
   .biu_cp0_rdata                   (biu_cp0_rdata                  ),
   .biu_cp0_rvba                    (biu_cp0_rvba                   ),
-  .biu_cp0_se_int                  (biu_cp0_se_int                 ),
-  .biu_cp0_ss_int                  (biu_cp0_ss_int                 ),
-  .biu_cp0_st_int                  (biu_cp0_st_int                 ),
+  .biu_cp0_se_int                  (biu_cp0_se_int & ~debug_mode   ),
+  .biu_cp0_ss_int                  (biu_cp0_ss_int & ~debug_mode   ),
+  .biu_cp0_st_int                  (biu_cp0_st_int & ~debug_mode   ),
   .biu_yy_xx_no_op                 (biu_yy_xx_no_op                ),
   .cp0_biu_icg_en                  (cp0_biu_icg_en                 ),
   .cp0_biu_lpmd_b                  (cp0_biu_lpmd_b                 ),
@@ -4717,7 +4734,15 @@ ct_cp0_top  x_ct_cp0_top (
   .rtu_yy_xx_commit0_iid           (rtu_yy_xx_commit0_iid          ),
   .rtu_yy_xx_dbgon                 (rtu_yy_xx_dbgon                ),
   .rtu_yy_xx_expt_vec              (rtu_yy_xx_expt_vec             ),
-  .rtu_yy_xx_flush                 (rtu_yy_xx_flush                )
+  .rtu_yy_xx_flush                 (rtu_yy_xx_flush                ),
+
+  // debug request
+  .debug_req_i                     (debug_req_i                    ),
+  // is in debug mode
+  .debug_mode_o                    (debug_mode                     ),
+  // dcsr to ct_rtu_retire
+  .dcsr_value_o                    (dcsr_value                     ),
+  .is_vld_ebreak_inst_i            (is_vld_ebreak_inst             )
 );
 
 // &Connect(.cpurst_b   (idu_rst_b)); @82
@@ -5179,7 +5204,15 @@ ct_rtu_top  x_ct_rtu_top (
   .vfpu_rtu_pipe6_cmplt                 (vfpu_rtu_pipe6_cmplt                ),
   .vfpu_rtu_pipe6_iid                   (vfpu_rtu_pipe6_iid                  ),
   .vfpu_rtu_pipe7_cmplt                 (vfpu_rtu_pipe7_cmplt                ),
-  .vfpu_rtu_pipe7_iid                   (vfpu_rtu_pipe7_iid                  )
+  .vfpu_rtu_pipe7_iid                   (vfpu_rtu_pipe7_iid                  ),
+
+  .cp0_yy_priv_mode_i                   (cp0_yy_priv_mode                    ),
+  .cp0_yy_virtual_mode_i                (cp0_yy_virtual_mode                 ),
+  // dcsr to ct_rtu_retire
+  .dcsr_value_i                         (dcsr_value                          ),
+  // is in debug mode
+  .debug_mode_i                         (debug_mode                          ),
+  .is_vld_ebreak_inst_o                 (is_vld_ebreak_inst                  )
 );
 
 // &Connect(.cpurst_b   (idu_rst_b)); @88

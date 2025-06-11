@@ -1,0 +1,1888 @@
+From e1b21b5ee3f713d8e3f1b18e2bf2174494c19aed Mon Sep 17 00:00:00 2001
+From: Zexin Fu <zexifu@iis.ee.ethz.ch>
+Date: Wed, 11 Jun 2025 21:29:49 +0200
+Subject: [PATCH 24/24] Add RISC-V debug supports cooperate with Cheshire debug
+ module:
+
+1. Add debug mode, modify ifetch, decoder, rob and retire logic;
+2. Add debug mode related CSRs: dcsr, dpc, dscratch0, dscratch1;
+3. Add debug related instructions: dret, ebreak. Now can run Cheshire Jtag binary preload mode, which halts the core, does Jtag binary preload, writes dpc to the entry of the preloaded binary, and resumes the core to run the preloaded binary.
+4. Mask all the interrupts when the core is in debug mode;
+5. Restore the original fence type decoder for ecall & ebreak instructions.
+---
+ C910_RTL_FACTORY/gen_rtl/cp0/rtl/ct_cp0_iui.v |  45 ++-
+ .../gen_rtl/cp0/rtl/ct_cp0_regs.v             | 311 ++++++++++++++++--
+ C910_RTL_FACTORY/gen_rtl/cp0/rtl/ct_cp0_top.v |  46 ++-
+ C910_RTL_FACTORY/gen_rtl/cpu/rtl/ct_core.v    |  55 +++-
+ C910_RTL_FACTORY/gen_rtl/cpu/rtl/ct_top.v     |  14 +-
+ C910_RTL_FACTORY/gen_rtl/cpu/rtl/openC910.v   |  26 +-
+ .../gen_rtl/idu/rtl/ct_idu_id_decd.v          |   3 +
+ .../gen_rtl/idu/rtl/ct_idu_id_decd_special.v  |   1 +
+ .../gen_rtl/idu/rtl/ct_idu_id_dp.v            |  60 +++-
+ .../gen_rtl/idu/rtl/ct_idu_rf_pipe0_decd.v    |   6 +
+ C910_RTL_FACTORY/gen_rtl/idu/rtl/ct_idu_top.v |  24 +-
+ .../gen_rtl/ifu/rtl/ct_ifu_vector.v           |  10 +-
+ .../gen_rtl/rtu/rtl/ct_rtu_retire.v           |  83 ++++-
+ C910_RTL_FACTORY/gen_rtl/rtu/rtl/ct_rtu_rob.v |   4 +-
+ .../gen_rtl/rtu/rtl/ct_rtu_rob_expt.v         |  10 +-
+ C910_RTL_FACTORY/gen_rtl/rtu/rtl/ct_rtu_top.v |  38 ++-
+ smart_run/logical/common/cpu_sub_system_axi.v |  10 +-
+ .../logical/common/rv_integration_platform.v  |  10 +-
+ 18 files changed, 676 insertions(+), 80 deletions(-)
+
+diff --git a/C910_RTL_FACTORY/gen_rtl/cp0/rtl/ct_cp0_iui.v b/C910_RTL_FACTORY/gen_rtl/cp0/rtl/ct_cp0_iui.v
+index c1a8e72..66bfb3f 100644
+--- a/C910_RTL_FACTORY/gen_rtl/cp0/rtl/ct_cp0_iui.v
++++ b/C910_RTL_FACTORY/gen_rtl/cp0/rtl/ct_cp0_iui.v
+@@ -37,6 +37,7 @@ module ct_cp0_iui(
+   cp0_iu_ex3_rslt_vld,
+   cp0_mmu_tlb_all_inv,
+   cp0_mret,
++  cp0_dret,
+   cp0_rtu_xx_int_b,
+   cp0_rtu_xx_vec,
+   cp0_sret,
+@@ -61,6 +62,7 @@ module ct_cp0_iui(
+   iui_regs_ex3_inst_csr,
+   iui_regs_inst_mret,
+   iui_regs_inst_sret,
++  iui_regs_inst_dret,
+   iui_regs_inv_expt,
+   iui_regs_opcode,
+   iui_regs_ori_src0,
+@@ -87,6 +89,7 @@ module ct_cp0_iui(
+   regs_iui_int_sel,
+   regs_iui_l2_regs_sel,
+   regs_iui_pm,
++  regs_iui_d,
+   regs_iui_reg_idx,
+   regs_iui_scnt_inv,
+   regs_iui_tee_ff,
+@@ -140,6 +143,7 @@ input            regs_iui_hpcp_scr_inv;
+ input   [14 :0]  regs_iui_int_sel;       
+ input            regs_iui_l2_regs_sel;   
+ input   [1  :0]  regs_iui_pm;            
++input            regs_iui_d;
+ input   [3  :0]  regs_iui_reg_idx;       
+ input            regs_iui_scnt_inv;      
+ input            regs_iui_tee_ff;        
+@@ -175,6 +179,7 @@ output  [6  :0]  cp0_iu_ex3_rslt_preg;
+ output           cp0_iu_ex3_rslt_vld;    
+ output           cp0_mmu_tlb_all_inv;    
+ output           cp0_mret;               
++output           cp0_dret;
+ output           cp0_rtu_xx_int_b;       
+ output  [4  :0]  cp0_rtu_xx_vec;         
+ output           cp0_sret;               
+@@ -185,6 +190,7 @@ output           iui_regs_csrw;
+ output           iui_regs_ex3_inst_csr;  
+ output           iui_regs_inst_mret;     
+ output           iui_regs_inst_sret;     
++output           iui_regs_inst_dret;
+ output           iui_regs_inv_expt;      
+ output  [31 :0]  iui_regs_opcode;        
+ output  [63 :0]  iui_regs_ori_src0;      
+@@ -210,6 +216,7 @@ reg              iui_ex1_inst_csrrw;
+ reg              iui_ex1_inst_csrrwi;    
+ reg              iui_ex1_inst_mret;      
+ reg              iui_ex1_inst_sret;      
++reg              iui_ex1_inst_dret;
+ reg              iui_ex1_inst_wfi;       
+ reg     [31 :0]  iui_ex1_opcode;         
+ reg     [6  :0]  iui_ex1_preg;           
+@@ -255,6 +262,7 @@ wire    [6  :0]  cp0_iu_ex3_rslt_preg;
+ wire             cp0_iu_ex3_rslt_vld;    
+ wire             cp0_mmu_tlb_all_inv;    
+ wire             cp0_mret;               
++wire             cp0_dret;
+ wire             cp0_rtu_xx_int_b;       
+ wire    [4  :0]  cp0_rtu_xx_vec;         
+ wire             cp0_select;             
+@@ -287,6 +295,7 @@ wire             inst_lpmd;
+ wire             inst_lpmd_ex1_ex2;      
+ wire             inst_mret_ex2;          
+ wire             inst_sret_ex2;          
++wire             inst_dret_ex2;          
+ wire             int_vld;                
+ wire    [11 :0]  iui_addr;               
+ wire             iui_clk_en;             
+@@ -306,10 +315,12 @@ wire             iui_inst_csrrsi;
+ wire             iui_inst_csrrw;         
+ wire             iui_inst_csrrwi;        
+ wire             iui_inst_mret;          
++wire             iui_inst_dret;
+ wire             iui_inst_ro;            
+ wire             iui_inst_sret;          
+ wire             iui_inst_wfi;           
+ wire             iui_m_mode;             
++wire             iui_d_mode;
+ wire    [31 :0]  iui_opcode;             
+ wire    [6  :0]  iui_preg;               
+ wire             iui_privilege;          
+@@ -319,6 +330,7 @@ wire             iui_regs_csrw;
+ wire             iui_regs_ex3_inst_csr;  
+ wire             iui_regs_inst_mret;     
+ wire             iui_regs_inst_sret;     
++wire             iui_regs_inst_dret;
+ wire             iui_regs_inv_expt;      
+ wire    [31 :0]  iui_regs_opcode;        
+ wire    [63 :0]  iui_regs_ori_src0;      
+@@ -355,6 +367,7 @@ wire             regs_iui_hpcp_scr_inv;
+ wire    [14 :0]  regs_iui_int_sel;       
+ wire             regs_iui_l2_regs_sel;   
+ wire    [1  :0]  regs_iui_pm;            
++wire             regs_iui_d;
+ wire    [3  :0]  regs_iui_reg_idx;       
+ wire             regs_iui_scnt_inv;      
+ wire             regs_iui_tee_ff;        
+@@ -375,6 +388,7 @@ wire             rf_inst_csrrw;
+ wire             rf_inst_csrrwi;         
+ wire             rf_inst_mret;           
+ wire             rf_inst_sret;           
++wire             rf_inst_dret;           
+ wire             rf_inst_wfi;            
+ wire             rst_inv_done;           
+ wire             rtu_yy_xx_commit0;      
+@@ -707,6 +721,13 @@ parameter HEDELEG   = 12'h602;
+ 
+ parameter VSSTATUS  = 12'h200;
+ 
++// 6. Debug CSR
++parameter DCSR      = 12'h7b0;
++parameter DPC       = 12'h7b1;
++parameter DSCRATCH0 = 12'h7b2;
++parameter DSCRATCH1 = 12'h7b3;
++
++
+ //==========================================================
+ //                Handling the CP0 operations
+ //==========================================================
+@@ -716,15 +737,17 @@ parameter VSSTATUS  = 12'h200;
+ // WFI:    5'b01001
+ // SRET:   5'b01000
+ // MRET:   5'b01010
++// DRET:   5'b01011
+ // CSRRW:  5'b10000
+ // CSRRS:  5'b10001
+ // CSRRC:  5'b10010
+ // CSRRWI: 5'b10011
+ // CSRRSI: 5'b10100
+ // CSRRCI: 5'b10101
+-assign rf_inst_wfi    = idu_cp0_rf_func[3] &&  idu_cp0_rf_func[0];
++assign rf_inst_wfi    = idu_cp0_rf_func[3] && !idu_cp0_rf_func[1] &&  idu_cp0_rf_func[0];
+ assign rf_inst_sret   = idu_cp0_rf_func[3] && !idu_cp0_rf_func[1] && !idu_cp0_rf_func[0];
+-assign rf_inst_mret   = idu_cp0_rf_func[3] &&  idu_cp0_rf_func[1];
++assign rf_inst_mret   = idu_cp0_rf_func[3] &&  idu_cp0_rf_func[1] && !idu_cp0_rf_func[0];
++assign rf_inst_dret   = idu_cp0_rf_func[3] &&  idu_cp0_rf_func[1] &&  idu_cp0_rf_func[0];
+ assign rf_inst_csrrw  = idu_cp0_rf_func[4] &&  idu_cp0_rf_func[2:0] == 3'b000;
+ assign rf_inst_csrrs  = idu_cp0_rf_func[4] &&  idu_cp0_rf_func[2:0] == 3'b001;
+ assign rf_inst_csrrc  = idu_cp0_rf_func[4] &&  idu_cp0_rf_func[2:0] == 3'b010;
+@@ -738,6 +761,7 @@ begin
+     iui_ex1_inst_wfi      <= 1'b0; 
+     iui_ex1_inst_sret     <= 1'b0; 
+     iui_ex1_inst_mret     <= 1'b0; 
++    iui_ex1_inst_dret     <= 1'b0; 
+     iui_ex1_inst_csrrw    <= 1'b0; 
+     iui_ex1_inst_csrrs    <= 1'b0; 
+     iui_ex1_inst_csrrc    <= 1'b0; 
+@@ -753,6 +777,7 @@ begin
+     iui_ex1_inst_wfi      <= rf_inst_wfi; 
+     iui_ex1_inst_sret     <= rf_inst_sret; 
+     iui_ex1_inst_mret     <= rf_inst_mret; 
++    iui_ex1_inst_dret     <= rf_inst_dret;
+     iui_ex1_inst_csrrw    <= rf_inst_csrrw; 
+     iui_ex1_inst_csrrs    <= rf_inst_csrrs; 
+     iui_ex1_inst_csrrc    <= rf_inst_csrrc; 
+@@ -768,6 +793,7 @@ begin
+     iui_ex1_inst_wfi      <= iui_ex1_inst_wfi; 
+     iui_ex1_inst_sret     <= iui_ex1_inst_sret; 
+     iui_ex1_inst_mret     <= iui_ex1_inst_mret; 
++    iui_ex1_inst_dret     <= iui_ex1_inst_dret; 
+     iui_ex1_inst_csrrw    <= iui_ex1_inst_csrrw; 
+     iui_ex1_inst_csrrs    <= iui_ex1_inst_csrrs; 
+     iui_ex1_inst_csrrc    <= iui_ex1_inst_csrrc; 
+@@ -784,6 +810,7 @@ end
+ assign iui_inst_wfi     = iui_ex1_inst_wfi; 
+ assign iui_inst_sret    = iui_ex1_inst_sret; 
+ assign iui_inst_mret    = iui_ex1_inst_mret; 
++assign iui_inst_dret    = iui_ex1_inst_dret; 
+ assign iui_inst_csrrw   = iui_ex1_inst_csrrw; 
+ assign iui_inst_csrrs   = iui_ex1_inst_csrrs; 
+ assign iui_inst_csrrc   = iui_ex1_inst_csrrc; 
+@@ -1069,6 +1096,13 @@ begin
+ 
+     //FXCR      : addr_inv = 1'b0;
+ 
++    // 6. Debug CSR
++    DCSR      : addr_inv = 1'b0;
++    DPC       : addr_inv = 1'b0;
++    DSCRATCH0 : addr_inv = 1'b0;
++    DSCRATCH1 : addr_inv = 1'b0;
++
++
+     default   : addr_inv = 1'b1; 
+   endcase
+ // &CombEnd; @728
+@@ -1315,6 +1349,7 @@ assign iui_m_mode = regs_iui_pm[1:0] == 2'b11;
+ assign iui_s_mode = regs_iui_pm[1:0] == 2'b01;
+ assign iui_u_mode = regs_iui_pm[1:0] == 2'b00;
+ assign iui_v_mode = regs_iui_v       == 1'b1;
++assign iui_d_mode = regs_iui_d       == 1'b1;
+ 
+ // vs-mode access hs-mode csr or inst
+ assign iui_hs_inv = 1'b0;
+@@ -1325,6 +1360,7 @@ assign iui_s_inv  = iui_s_mode
+                     ((iui_addr[11:10] != 2'b01) && 
+                      (iui_addr[7:0] != 8'b1100_0010)) // exclude MCOR here, allow MCOR to be writen in S mode
+                     || iui_inst_mret
++                    || iui_inst_dret
+                     || iui_inst_sret && regs_iui_tsr
+                     || iui_inst_wfi && regs_iui_tw
+                     || iui_inst_csr && iui_addr[11:0] == SATP && regs_iui_tvm
+@@ -1336,6 +1372,7 @@ assign iui_s_inv  = iui_s_mode
+ assign iui_u_inv  = iui_u_mode  
+                 && (iui_inst_csr && iui_addr[9:8] != 2'b00
+                     || iui_inst_mret
++                    || iui_inst_dret
+                     || iui_inst_sret
+                     || iui_inst_wfi
+                     || iui_inst_csr && regs_iui_ucnt_inv
+@@ -1374,6 +1411,7 @@ assign iui_tee_inv = iui_inst_csr && regs_iui_chk_vld
+ //in debug mode or m-mode set, the cp0 insctuction
+ //execute with privilege
+ assign iui_privilege = (rtu_yy_xx_dbgon
++                    || iui_d_mode
+                     || iui_m_mode
+                     || iui_s_mode && !iui_v_mode && !iui_s_inv
+                     || iui_s_mode && iui_v_mode  && !iui_s_inv && !iui_hs_inv
+@@ -1387,6 +1425,7 @@ assign iui_privilege = (rtu_yy_xx_dbgon
+ assign inst_csr_ex1      = cp0_ex1_select && iui_privilege && iui_inst_csr;
+ assign inst_mret_ex2     = cp0_ex2_select && iui_privilege && iui_inst_mret;
+ assign inst_sret_ex2     = cp0_ex2_select && iui_privilege && iui_inst_sret;
++assign inst_dret_ex2     = cp0_ex2_select && iui_privilege && iui_inst_dret;
+ 
+ //signal for lpmd enter into low power mode, not valid in ex3 stage
+ assign inst_lpmd_ex1_ex2 = (cp0_ex1_select || cp0_ex2_select) && iui_privilege
+@@ -1408,6 +1447,7 @@ assign inst_lpmd   = cp0_select && iui_privilege && iui_inst_wfi;
+ //assign cp0_csr     = cp0_select && iui_inst_csr;
+ assign cp0_mret    = cp0_select && iui_inst_mret;
+ assign cp0_sret    = cp0_select && iui_inst_sret;
++assign cp0_dret    = cp0_select && iui_inst_dret;
+ //assign cp0_wfi     = cp0_select && iui_inst_wfi;
+ 
+ //==========================================================
+@@ -1427,6 +1467,7 @@ end
+ assign iui_regs_sel          = inst_csr_ex2 && cp0_ex2_select;
+ assign iui_regs_inst_mret    = inst_mret_ex2;
+ assign iui_regs_inst_sret    = inst_sret_ex2;
++assign iui_regs_inst_dret    = inst_dret_ex2;
+ assign iui_regs_csr_wr       = iui_inst_csr && !iui_inst_ro;
+ assign iui_regs_addr[11:0]   = iui_addr[11:0];
+ assign iui_regs_inv_expt     = !iui_privilege && cp0_ex2_select;
+diff --git a/C910_RTL_FACTORY/gen_rtl/cp0/rtl/ct_cp0_regs.v b/C910_RTL_FACTORY/gen_rtl/cp0/rtl/ct_cp0_regs.v
+index 3a7c65d..b3a0074 100644
+--- a/C910_RTL_FACTORY/gen_rtl/cp0/rtl/ct_cp0_regs.v
++++ b/C910_RTL_FACTORY/gen_rtl/cp0/rtl/ct_cp0_regs.v
+@@ -134,6 +134,7 @@ module ct_cp0_regs(
+   cp0_mmu_wdata,
+   cp0_mmu_wreg,
+   cp0_mret,
++  cp0_dret,
+   cp0_pad_mstatus,
+   cp0_pmp_icg_en,
+   cp0_pmp_mpp,
+@@ -175,6 +176,7 @@ module ct_cp0_regs(
+   iui_regs_ex3_inst_csr,
+   iui_regs_inst_mret,
+   iui_regs_inst_sret,
++  iui_regs_inst_dret,
+   iui_regs_inv_expt,
+   iui_regs_opcode,
+   iui_regs_ori_src0,
+@@ -202,6 +204,7 @@ module ct_cp0_regs(
+   regs_iui_int_sel,
+   regs_iui_l2_regs_sel,
+   regs_iui_pm,
++  regs_iui_d,
+   regs_iui_reg_idx,
+   regs_iui_scnt_inv,
+   regs_iui_tee_ff,
+@@ -231,7 +234,13 @@ module ct_cp0_regs(
+   rtu_cp0_vstart,
+   rtu_cp0_vstart_vld,
+   rtu_yy_xx_expt_vec,
+-  rtu_yy_xx_flush
++  rtu_yy_xx_flush,
++
++  // debug request
++  debug_req_i,
++  // dcsr to ct_rtu_retire
++  dcsr_value_o,
++  is_vld_ebreak_inst_i
+ );
+ 
+ // &Ports; @25
+@@ -247,6 +256,7 @@ input            biu_cp0_se_int;
+ input            biu_cp0_ss_int;                 
+ input            biu_cp0_st_int;                 
+ input            cp0_mret;                       
++input            cp0_dret;
+ input            cp0_sret;                       
+ input            cp0_yy_clk_en;                  
+ input            cpurst_b;                       
+@@ -270,6 +280,7 @@ input            iui_regs_csrw;
+ input            iui_regs_ex3_inst_csr;          
+ input            iui_regs_inst_mret;             
+ input            iui_regs_inst_sret;             
++input            iui_regs_inst_dret;
+ input            iui_regs_inv_expt;              
+ input   [31 :0]  iui_regs_opcode;                
+ input   [63 :0]  iui_regs_ori_src0;              
+@@ -301,6 +312,12 @@ input   [6  :0]  rtu_cp0_vstart;
+ input            rtu_cp0_vstart_vld;             
+ input   [5  :0]  rtu_yy_xx_expt_vec;             
+ input            rtu_yy_xx_flush;                
++// debug request
++input            debug_req_i;
++// dcsr to ct_rtu_retire
++output  [63 :0]  dcsr_value_o;
++input            is_vld_ebreak_inst_i;
++
+ output           cp0_biu_icg_en;                 
+ output  [31 :0]  cp0_had_cpuid_0;                
+ output  [1  :0]  cp0_had_trace_pm_wdata;         
+@@ -437,6 +454,7 @@ output           regs_iui_hpcp_scr_inv;
+ output  [14 :0]  regs_iui_int_sel;               
+ output           regs_iui_l2_regs_sel;           
+ output  [1  :0]  regs_iui_pm;                    
++output           regs_iui_d;
+ output  [3  :0]  regs_iui_reg_idx;               
+ output           regs_iui_scnt_inv;              
+ output           regs_iui_tee_ff;                
+@@ -728,6 +746,7 @@ wire             cp0_mmu_sum;
+ wire    [63 :0]  cp0_mmu_wdata;                  
+ wire             cp0_mmu_wreg;                   
+ wire             cp0_mret;                       
++wire             cp0_dret;
+ wire    [63 :0]  cp0_pad_mstatus;                
+ wire             cp0_pmp_icg_en;                 
+ wire    [1  :0]  cp0_pmp_mpp;                    
+@@ -803,6 +822,7 @@ wire             iui_regs_csrw;
+ wire             iui_regs_ex3_inst_csr;          
+ wire             iui_regs_inst_mret;             
+ wire             iui_regs_inst_sret;             
++wire             iui_regs_inst_dret;
+ wire             iui_regs_inv_expt;              
+ wire    [31 :0]  iui_regs_opcode;                
+ wire    [63 :0]  iui_regs_ori_src0;              
+@@ -940,6 +960,7 @@ wire             regs_iui_hpcp_scr_inv;
+ wire    [14 :0]  regs_iui_int_sel;               
+ wire             regs_iui_l2_regs_sel;           
+ wire    [1  :0]  regs_iui_pm;                    
++wire             regs_iui_d;
+ wire    [3  :0]  regs_iui_reg_idx;               
+ wire             regs_iui_scnt_inv;              
+ wire             regs_iui_tee_ff;                
+@@ -1046,7 +1067,45 @@ wire    [63 :0]  vxsat_value;
+ wire             wb;                             
+ wire             wbr;                            
+ wire    [1  :0]  xs;                             
+-
++// debug request
++wire             debug_req_i;
++// dcsr to ct_rtu_retire
++wire    [63 :0]  dcsr_value_o;
++wire             is_vld_ebreak_inst_i;
++
++reg              debug_mode_q;
++wire    [3  :0]  dcsr_debugver;
++reg     [2  :0]  dcsr_extcause;
++reg              dcsr_cetrig;
++reg              dcsr_ebreakvs;
++reg              dcsr_ebreakvu;
++reg              dcsr_ebreakm;
++reg              dcsr_ebreaks;
++reg              dcsr_ebreaku;
++reg              dcsr_stepie;
++wire             dcsr_stopcount;
++wire             dcsr_stoptime;
++reg     [2  :0]  dcsr_cause;
++reg              dcsr_v;
++reg              dcsr_mprven;
++wire             dcsr_nmip;
++reg              dcsr_step;
++reg     [1  :0]  dcsr_prv;
++wire    [63 :0]  dcsr_value;
++wire             dcsr_local_en;
++
++reg     [63 :0]  dpc_value;
++wire             dpc_local_en;
++
++reg     [63 :0]  dscratch0_value;
++wire             dscratch0_local_en;
++
++reg     [63 :0]  dscratch1_value;
++wire             dscratch1_local_en;
++
++wire             debug_exception_en;
++wire             rtu_cp0_expt_vld_no_dbg;
++wire             rtu_cp0_expt_vld_dbg;
+ 
+ //==========================================================
+ //                 Instance of Gated Cell  
+@@ -1099,6 +1158,7 @@ assign regs_flush_clk_en = rtu_yy_xx_flush || iui_regs_sel
+                         || cfr_bits_done
+                         || iui_regs_inst_mret
+                         || iui_regs_inst_sret
++                        || iui_regs_inst_dret
+                         || iui_regs_inv_expt
+                         || iui_regs_ex3_inst_csr
+                         || fs_dirty_upd
+@@ -1106,6 +1166,7 @@ assign regs_flush_clk_en = rtu_yy_xx_flush || iui_regs_sel
+                         || rst_sample
+                         || ifu_cp0_rst_inv_req
+                         || tee_ff
++                        || (debug_req_i && !debug_mode_q)
+                           ;
+ // &Instance("gated_clk_cell", "x_regs_flush_gated_clk"); @68
+ gated_clk_cell  x_regs_flush_gated_clk (
+@@ -1370,6 +1431,18 @@ parameter HEDELEG   = 12'h602;
+ 
+ parameter VSSTATUS  = 12'h200;
+ 
++// 6. Debug CSR
++parameter DCSR      = 12'h7b0;
++parameter DPC       = 12'h7b1;
++parameter DSCRATCH0 = 12'h7b2;
++parameter DSCRATCH1 = 12'h7b3;
++
++  // debug causes
++parameter CauseBreakpoint = 3'h1;
++parameter CauseTrigger    = 3'h2;
++parameter CauseRequest    = 3'h3;
++parameter CauseSingleStep = 3'h4;
++
+ //==========================================================
+ //              Generate Local Signal to CSRs
+ //==========================================================
+@@ -1440,6 +1513,11 @@ assign fxcr_local_en     = iui_regs_sel && iui_regs_addr[11:0] == FXCR;
+ 
+ assign shpmcr_local_en   = iui_regs_sel && iui_regs_addr[11:0] == SHPMCR;
+ 
++assign dcsr_local_en      = iui_regs_sel && iui_regs_addr[11:0] == DCSR;
++assign dpc_local_en       = iui_regs_sel && iui_regs_addr[11:0] == DPC;
++assign dscratch0_local_en = iui_regs_sel && iui_regs_addr[11:0] == DSCRATCH0;
++assign dscratch1_local_en = iui_regs_sel && iui_regs_addr[11:0] == DSCRATCH1;
++
+ //==========================================================
+ //                 1. Machine Level CSRs
+ //==========================================================
+@@ -1621,7 +1699,7 @@ always @(posedge regs_flush_clk or negedge cpurst_b)
+ begin
+   if(!cpurst_b)
+     mpp[1:0] <= 2'b11;
+-  else if(rtu_cp0_expt_vld && !mdeleg_vld)
++  else if(rtu_cp0_expt_vld_no_dbg && !mdeleg_vld)
+     mpp[1:0] <= pm[1:0];
+   else if(iui_regs_inst_mret)
+     mpp[1:0] <= 2'b00;
+@@ -1636,7 +1714,7 @@ always @(posedge regs_flush_clk or negedge cpurst_b)
+ begin
+   if(!cpurst_b)
+     spp <= 1'b1;
+-  else if(rtu_cp0_expt_vld && mdeleg_vld)
++  else if(rtu_cp0_expt_vld_no_dbg && mdeleg_vld)
+     spp <= pm[0];
+   else if(iui_regs_inst_sret)
+     spp <= 1'b0;
+@@ -1656,7 +1734,7 @@ always @(posedge regs_flush_clk or negedge cpurst_b)
+ begin
+   if(!cpurst_b)
+     mpie <= 1'b0;
+-  else if(rtu_cp0_expt_vld && !mdeleg_vld)
++  else if(rtu_cp0_expt_vld_no_dbg && !mdeleg_vld)
+     mpie <= mie_bit;
+   else if(iui_regs_inst_mret)
+     mpie <= 1'b1;
+@@ -1670,7 +1748,7 @@ always @(posedge regs_flush_clk or negedge cpurst_b)
+ begin
+   if(!cpurst_b)
+     spie <= 1'b0;
+-  else if(rtu_cp0_expt_vld && mdeleg_vld)
++  else if(rtu_cp0_expt_vld_no_dbg && mdeleg_vld)
+     spie <= sie_bit;
+   else if(iui_regs_inst_sret)
+     spie <= 1'b1;
+@@ -1686,7 +1764,7 @@ always @(posedge regs_flush_clk or negedge cpurst_b)
+ begin
+   if(!cpurst_b)
+     mie_bit <= 1'b0;
+-  else if(rtu_cp0_expt_vld && !mdeleg_vld)
++  else if(rtu_cp0_expt_vld_no_dbg && !mdeleg_vld)
+     mie_bit <= 1'b0;
+   else if(iui_regs_inst_mret)
+     mie_bit <= mpie;
+@@ -1700,7 +1778,7 @@ always @(posedge regs_flush_clk or negedge cpurst_b)
+ begin
+   if(!cpurst_b)
+     sie_bit <= 1'b0;
+-  else if(rtu_cp0_expt_vld && mdeleg_vld)
++  else if(rtu_cp0_expt_vld_no_dbg && mdeleg_vld)
+     sie_bit <= 1'b0;
+   else if(iui_regs_inst_sret)
+     sie_bit <= spie;
+@@ -1988,7 +2066,7 @@ always @(posedge regs_flush_clk or negedge cpurst_b)
+ begin
+   if(!cpurst_b)
+     mepc_reg[62:0] <= 63'b0;
+-  else if(rtu_cp0_expt_vld && !mdeleg_vld)
++  else if(rtu_cp0_expt_vld_no_dbg && !mdeleg_vld)
+     mepc_reg[62:0] <= rtu_cp0_epc[63:1];
+   else if(mepc_local_en)
+     mepc_reg[62:0] <= iui_regs_src0[63:1];
+@@ -2010,7 +2088,7 @@ always @(posedge regs_flush_clk or negedge cpurst_b)
+ begin
+   if(!cpurst_b)
+     m_intr <= 1'b0;
+-  else if(rtu_cp0_expt_vld && !mdeleg_vld)
++  else if(rtu_cp0_expt_vld_no_dbg && !mdeleg_vld)
+     m_intr <= rtu_yy_xx_expt_vec[5];
+   else if(mcause_local_en)
+     m_intr <= iui_regs_src0[63];
+@@ -2022,7 +2100,7 @@ always @(posedge regs_flush_clk or negedge cpurst_b)
+ begin
+   if(!cpurst_b)
+     m_vector[4:0] <= 5'b0;
+-  else if(rtu_cp0_expt_vld && !mdeleg_vld)
++  else if(rtu_cp0_expt_vld_no_dbg && !mdeleg_vld)
+     m_vector[4:0] <= rtu_yy_xx_expt_vec[4:0];
+   else if(mcause_local_en)
+     m_vector[4:0] <= iui_regs_src0[4:0];
+@@ -2040,13 +2118,13 @@ assign mcause_value[63:0]  = {m_intr, 58'b0, m_vector[4:0]};
+ //  Providing the trap value register
+ //  the definiton for MTVAL register is listed as follows
+ //==========================================================
+-assign mtval_upd_data[63:0] = rtu_cp0_expt_vld ? rtu_cp0_expt_mtval[63:0]
++assign mtval_upd_data[63:0] = rtu_cp0_expt_vld_no_dbg ? rtu_cp0_expt_mtval[63:0]
+                                                : {32'b0, iui_regs_opcode[31:0]};
+ always @(posedge regs_flush_clk or negedge cpurst_b)
+ begin
+   if(!cpurst_b)
+     mtval_data[63:0] <= 64'b0;
+-  else if((rtu_cp0_expt_vld || iui_regs_inv_expt) && !mdeleg_vld) 
++  else if((rtu_cp0_expt_vld_no_dbg || iui_regs_inv_expt) && !mdeleg_vld) 
+     mtval_data[63:0] <= mtval_upd_data[63:0];
+   else if(mtval_local_en)
+     mtval_data[63:0] <= iui_regs_src0[63:0];
+@@ -2319,7 +2397,7 @@ always @(posedge regs_flush_clk or negedge cpurst_b)
+ begin
+   if(!cpurst_b)
+     sepc_reg[62:0] <= 63'b0;
+-  else if(rtu_cp0_expt_vld && mdeleg_vld)
++  else if(rtu_cp0_expt_vld_no_dbg && mdeleg_vld)
+     sepc_reg[62:0] <= rtu_cp0_epc[63:1];
+   else if(sepc_local_en)
+     sepc_reg[62:0] <= iui_regs_src0[63:1];
+@@ -2341,7 +2419,7 @@ always @(posedge regs_flush_clk or negedge cpurst_b)
+ begin
+   if(!cpurst_b)
+     s_intr <= 1'b0;
+-  else if(rtu_cp0_expt_vld && mdeleg_vld)
++  else if(rtu_cp0_expt_vld_no_dbg && mdeleg_vld)
+     s_intr <= rtu_yy_xx_expt_vec[5];
+   else if(scause_local_en)
+     s_intr <= iui_regs_src0[63];
+@@ -2353,7 +2431,7 @@ always @(posedge regs_flush_clk or negedge cpurst_b)
+ begin
+   if(!cpurst_b)
+     s_vector[4:0] <= 5'b0;
+-  else if(rtu_cp0_expt_vld && mdeleg_vld)
++  else if(rtu_cp0_expt_vld_no_dbg && mdeleg_vld)
+     s_vector[4:0] <= rtu_yy_xx_expt_vec[4:0];
+   else if(scause_local_en)
+     s_vector[4:0] <= iui_regs_src0[4:0];
+@@ -2371,13 +2449,13 @@ assign scause_value[63:0] = {s_intr, 58'b0, s_vector[4:0]};
+ //  Providing the trap value register
+ //  the definiton for STVAL register is listed as follows
+ //==========================================================
+-assign stval_upd_data[63:0] = rtu_cp0_expt_vld ? rtu_cp0_expt_mtval[63:0]
++assign stval_upd_data[63:0] = rtu_cp0_expt_vld_no_dbg ? rtu_cp0_expt_mtval[63:0]
+                                                : {32'b0, iui_regs_opcode[31:0]};
+ always @(posedge regs_flush_clk or negedge cpurst_b)
+ begin
+   if(!cpurst_b)
+     stval_data[63:0] <= 64'b0;
+-  else if((rtu_cp0_expt_vld || iui_regs_inv_expt) && mdeleg_vld) 
++  else if((rtu_cp0_expt_vld_no_dbg || iui_regs_inv_expt) && mdeleg_vld) 
+     stval_data[63:0] <= stval_upd_data[63:0];
+   else if(stval_local_en)
+     stval_data[63:0] <= iui_regs_src0[63:0];
+@@ -2641,12 +2719,12 @@ assign vlenb_value[63:0] = 64'd16; //VLEN 128 bit
+ //  Providing the C-SKY Extension Status of the current core
+ //  the definiton for MXSTATUS register is listed as follows
+ //==========================================================
+-assign pm_wen = rtu_cp0_expt_vld
++assign pm_wen = rtu_cp0_expt_vld_no_dbg
+                 || iui_regs_inst_mret
+                 || iui_regs_inst_sret;
+ 
+ // &CombBeg; @1889
+-always @( rtu_cp0_expt_vld
++always @( rtu_cp0_expt_vld_no_dbg
+        or pm[1:0]
+        or sstatus_spp
+        or mpp[1:0]
+@@ -2654,9 +2732,9 @@ always @( rtu_cp0_expt_vld
+        or mdeleg_vld
+        or iui_regs_inst_mret)
+ begin
+-  if(rtu_cp0_expt_vld && !mdeleg_vld)
++  if(rtu_cp0_expt_vld_no_dbg && !mdeleg_vld)
+     pm_wdata[1:0] = 2'b11;
+-  else if(rtu_cp0_expt_vld && mdeleg_vld)
++  else if(rtu_cp0_expt_vld_no_dbg && mdeleg_vld)
+     pm_wdata[1:0] = 2'b01;
+   else if(iui_regs_inst_mret)
+     pm_wdata[1:0] = mpp[1:0];
+@@ -3791,6 +3869,175 @@ assign hedeleg_value[63:0] = 64'b0;
+ assign vsstatus_value[63:0] = 64'b0;
+ 
+ 
++//==========================================================
++//                      6. Debug CSR
++//==========================================================
++
++//==========================================================
++//                        Debug Mode
++//==========================================================
++always @(posedge regs_flush_clk or negedge cpurst_b)
++begin
++  if(!cpurst_b) begin
++    debug_mode_q   <= 1'b0;
++  end else if(iui_regs_inst_dret) begin
++    debug_mode_q   <= 1'b0;
++  end else if(rtu_cp0_expt_vld_dbg) begin
++    debug_mode_q   <= 1'b1;
++  end else if(debug_req_i) begin
++    debug_mode_q   <= 1'b1;
++  end else begin
++    debug_mode_q   <= debug_mode_q;
++  end
++end
++
++//==========================================================
++//               Define the DCSR register
++//==========================================================
++
++assign debug_exception_en       = rtu_yy_xx_expt_vec[4:0] == 5'd24;
++assign rtu_cp0_expt_vld_no_dbg  = rtu_cp0_expt_vld && !debug_exception_en;
++assign rtu_cp0_expt_vld_dbg     = rtu_cp0_expt_vld && debug_exception_en;
++
++always @(posedge regs_clk or negedge cpurst_b)
++begin
++  if(!cpurst_b)
++  begin
++    dcsr_extcause  <= 3'b0;
++    dcsr_cetrig    <= 1'b0;
++    dcsr_ebreakvs  <= 1'b0;
++    dcsr_ebreakvu  <= 1'b0;
++    dcsr_ebreakm   <= 1'b0;
++    dcsr_ebreaks   <= 1'b0;
++    dcsr_ebreaku   <= 1'b0;
++    dcsr_stepie    <= 1'b0;
++    dcsr_mprven    <= 1'b0;
++    dcsr_step      <= 1'b0;
++  end
++  else if(dcsr_local_en)
++  begin
++    dcsr_extcause  <= iui_regs_src0[26:24];
++    dcsr_cetrig    <= iui_regs_src0[19];
++    dcsr_ebreakvs  <= iui_regs_src0[17];
++    dcsr_ebreakvu  <= iui_regs_src0[16];
++    dcsr_ebreakm   <= iui_regs_src0[15];
++    dcsr_ebreaks   <= iui_regs_src0[13];
++    dcsr_ebreaku   <= iui_regs_src0[12];
++    dcsr_stepie    <= iui_regs_src0[11];
++    dcsr_mprven    <= iui_regs_src0[4];
++    dcsr_step      <= iui_regs_src0[2];
++  end
++  else
++  begin
++    dcsr_extcause  <= dcsr_extcause;
++    dcsr_cetrig    <= dcsr_cetrig;
++    dcsr_ebreakvs  <= dcsr_ebreakvs;
++    dcsr_ebreakvu  <= dcsr_ebreakvu;
++    dcsr_ebreakm   <= dcsr_ebreakm;
++    dcsr_ebreaks   <= dcsr_ebreaks;
++    dcsr_ebreaku   <= dcsr_ebreaku;
++    dcsr_stepie    <= dcsr_stepie;
++    dcsr_mprven    <= dcsr_mprven;
++    dcsr_step      <= dcsr_step;
++  end
++end
++
++assign dcsr_debugver  = 4'h4;
++assign dcsr_stopcount = 1'b0;
++assign dcsr_stoptime  = 1'b0;
++assign dcsr_nmip      = 1'b0;
++                                           
++always @(posedge regs_flush_clk or negedge cpurst_b)
++begin
++  if(!cpurst_b) begin
++    dcsr_cause     <= 3'b0;
++    dcsr_v         <= 1'b0;
++    dcsr_prv       <= 2'b0;
++  end else if(dcsr_local_en) begin
++    dcsr_cause     <= iui_regs_src0[8:6];
++    dcsr_v         <= iui_regs_src0[5];
++    dcsr_prv       <= iui_regs_src0[1:0];
++  end else if(rtu_cp0_expt_vld_dbg) begin
++    dcsr_cause     <= CauseRequest;
++    dcsr_v         <= v;
++    dcsr_prv       <= pm[1:0];
++  end else if(is_vld_ebreak_inst_i && !debug_mode_q) begin
++    dcsr_cause     <= CauseBreakpoint;
++    dcsr_v         <= v;
++    dcsr_prv       <= pm[1:0];
++  end else begin
++    dcsr_cause     <= dcsr_cause;
++    dcsr_v         <= dcsr_v;
++    dcsr_prv       <= dcsr_prv;
++  end
++end
++
++assign dcsr_value[63:0]  = {dcsr_debugver, 1'b0, dcsr_extcause, 4'b0, dcsr_cetrig, 1'b0,
++                            dcsr_ebreakvs, dcsr_ebreakvu, dcsr_ebreakm, 1'b0,
++                            dcsr_ebreaks, dcsr_ebreaku, dcsr_stepie, dcsr_stopcount, dcsr_stoptime,
++                            dcsr_cause, dcsr_v, dcsr_mprven, dcsr_nmip, dcsr_step, dcsr_prv};
++
++assign dcsr_value_o[63:0] = dcsr_value[63:0];
++
++//==========================================================
++//               Define the DPC register
++//==========================================================
++always @(posedge regs_flush_clk or negedge cpurst_b)
++begin
++  if(!cpurst_b) begin
++    dpc_value      <= 64'b0;
++  end else if(dpc_local_en) begin
++    dpc_value      <= iui_regs_src0[63:0];
++  end else if(rtu_cp0_expt_vld_dbg) begin
++    dpc_value      <= {rtu_cp0_epc[63:1], 1'b0};
++  end else if(is_vld_ebreak_inst_i && !debug_mode_q) begin
++    dpc_value      <= {rtu_cp0_epc[63:1], 1'b0};
++  end else begin
++    dpc_value      <= dpc_value;
++  end
++end
++
++//==========================================================
++//              Define the DSCRATCH0 register
++//==========================================================
++always @(posedge regs_clk or negedge cpurst_b)
++begin
++  if(!cpurst_b)
++  begin
++    dscratch0_value <= 64'b0;
++  end
++  else if(dscratch0_local_en)
++  begin
++    dscratch0_value <= iui_regs_src0[63:0];
++  end
++  else
++  begin
++    dscratch0_value <= dscratch0_value;
++  end
++end
++
++
++//==========================================================
++//              Define the DSCRATCH1 register
++//==========================================================
++always @(posedge regs_clk or negedge cpurst_b)
++begin
++  if(!cpurst_b)
++  begin
++    dscratch1_value <= 64'b0;
++  end
++  else if(dscratch1_local_en)
++  begin
++    dscratch1_value <= iui_regs_src0[63:0];
++  end
++  else
++  begin
++    dscratch1_value <= dscratch1_value;
++  end
++end
++
++
++
+ 
+ //==========================================================
+ // select regs depending on the implementation location
+@@ -3902,7 +4149,11 @@ always @( vlenb_value[63:0]
+        or mcor_value[63:0]
+        or fxcr_value[63:0]
+        or vstart_value[63:0]
+-       or mwmsr_value[63:0])
++       or mwmsr_value[63:0]
++       or dcsr_value[63:0]
++       or dpc_value[63:0]
++       or dscratch0_value[63:0]
++       or dscratch1_value[63:0])
+ begin
+   case(iui_regs_addr[11:0])
+     MVENDORID : data_out[63:0] = mvendorid_value[63:0];
+@@ -3978,6 +4229,11 @@ begin
+ 
+     VSSTATUS  : data_out[63:0] = vsstatus_value[63:0];
+ 
++    DCSR      : data_out[63:0] = dcsr_value[63:0];
++    DPC       : data_out[63:0] = dpc_value[63:0];
++    DSCRATCH0 : data_out[63:0] = dscratch0_value[63:0];
++    DSCRATCH1 : data_out[63:0] = dscratch1_value[63:0];
++
+     default   : data_out[63:0] = 64'b0; 
+   endcase
+ // &CombEnd; @3742
+@@ -3991,6 +4247,7 @@ assign regs_iui_tsr     = tsr;
+ assign regs_iui_tw      = tw;
+ assign regs_iui_tvm     = tvm;
+ assign regs_iui_pm[1:0] = pm[1:0];
++assign regs_iui_d       = debug_mode_q;
+ assign regs_iui_v       = v;
+ assign regs_iui_cskyee  = cskyisaee;
+ 
+@@ -4175,9 +4432,10 @@ assign cp0_idu_icg_en = local_icg_en[1];
+ //              Generate output to IU
+ //==========================================================
+ // Exception Related Information
+-assign cp0_iu_ex3_efpc[38:0]  = cp0_mret ? mepc_value[39:1]
++assign cp0_iu_ex3_efpc[38:0]  = cp0_dret ? dpc_value[39:1] :
++                                cp0_mret ? mepc_value[39:1]
+                                          : sepc_value[39:1];
+-assign cp0_iu_ex3_efpc_vld    = cp0_mret || cp0_sret;
++assign cp0_iu_ex3_efpc_vld    = cp0_mret || cp0_sret || cp0_dret;
+ 
+ assign cp0_iu_div_entry_disable = div_entry_dis;
+ assign cp0_iu_div_entry_disable_clr = div_entry_dis && mhint2_local_en && !iui_regs_src0[11];
+@@ -4366,7 +4624,8 @@ assign regs_iui_wdata[63:0] = {32'b0, cindex_rid[3:0], 3'b0, cindex_way[3:0], ci
+ 
+ // Local ICG Enable
+ assign cp0_biu_icg_en     = local_icg_en[5];
+-assign cp0_xx_core_icg_en = local_icg_en[8];
++// assign cp0_xx_core_icg_en = local_icg_en[8];
++assign cp0_xx_core_icg_en = 1'b1; // there is a timing loop here, cut it by tire 1
+ 
+ //==========================================================
+ //              Generate output to RTU
+diff --git a/C910_RTL_FACTORY/gen_rtl/cp0/rtl/ct_cp0_top.v b/C910_RTL_FACTORY/gen_rtl/cp0/rtl/ct_cp0_top.v
+index a21ce7e..a4e6c6b 100644
+--- a/C910_RTL_FACTORY/gen_rtl/cp0/rtl/ct_cp0_top.v
++++ b/C910_RTL_FACTORY/gen_rtl/cp0/rtl/ct_cp0_top.v
+@@ -232,7 +232,15 @@ module ct_cp0_top(
+   rtu_yy_xx_commit0_iid,
+   rtu_yy_xx_dbgon,
+   rtu_yy_xx_expt_vec,
+-  rtu_yy_xx_flush
++  rtu_yy_xx_flush,
++
++  // debug request
++  debug_req_i,
++  // is in debug mode
++  debug_mode_o,
++  // dcsr to ct_rtu_retire
++  dcsr_value_o,
++  is_vld_ebreak_inst_i
+ );
+ 
+ // &Ports; @25
+@@ -306,6 +314,9 @@ input   [6  :0]  rtu_yy_xx_commit0_iid;
+ input            rtu_yy_xx_dbgon;                
+ input   [5  :0]  rtu_yy_xx_expt_vec;             
+ input            rtu_yy_xx_flush;                
++// debug request
++input            debug_req_i;
++
+ output           cp0_biu_icg_en;                 
+ output  [1  :0]  cp0_biu_lpmd_b;                 
+ output  [15 :0]  cp0_biu_op;                     
+@@ -456,6 +467,12 @@ output           cp0_yy_dcache_pref_en;
+ output           cp0_yy_hyper;                   
+ output  [1  :0]  cp0_yy_priv_mode;               
+ output           cp0_yy_virtual_mode;            
++// is in debug mode
++output           debug_mode_o;
++// dcsr to ct_rtu_retire
++output  [63 :0]  dcsr_value_o;
++input            is_vld_ebreak_inst_i;
++
+ 
+ // &Regs; @26
+ 
+@@ -602,6 +619,7 @@ wire             cp0_mmu_tlb_all_inv;
+ wire    [63 :0]  cp0_mmu_wdata;                  
+ wire             cp0_mmu_wreg;                   
+ wire             cp0_mret;                       
++wire             cp0_dret;                       
+ wire    [63 :0]  cp0_pad_mstatus;                
+ wire             cp0_pmp_icg_en;                 
+ wire    [1  :0]  cp0_pmp_mpp;                    
+@@ -658,6 +676,7 @@ wire             iui_regs_csrw;
+ wire             iui_regs_ex3_inst_csr;          
+ wire             iui_regs_inst_mret;             
+ wire             iui_regs_inst_sret;             
++wire             iui_regs_inst_dret;
+ wire             iui_regs_inv_expt;              
+ wire    [31 :0]  iui_regs_opcode;                
+ wire    [63 :0]  iui_regs_ori_src0;              
+@@ -692,6 +711,7 @@ wire             regs_iui_hpcp_scr_inv;
+ wire    [14 :0]  regs_iui_int_sel;               
+ wire             regs_iui_l2_regs_sel;           
+ wire    [1  :0]  regs_iui_pm;                    
++wire             regs_iui_d;
+ wire    [3  :0]  regs_iui_reg_idx;               
+ wire             regs_iui_scnt_inv;              
+ wire             regs_iui_tee_ff;                
+@@ -725,8 +745,13 @@ wire    [6  :0]  rtu_yy_xx_commit0_iid;
+ wire             rtu_yy_xx_dbgon;                
+ wire    [5  :0]  rtu_yy_xx_expt_vec;             
+ wire             rtu_yy_xx_flush;                
+-
+-
++// debug request
++wire             debug_req_i;
++// is in debug mode
++wire             debug_mode_o;
++// dcsr to ct_rtu_retire
++wire    [63 :0]  dcsr_value_o;
++wire             is_vld_ebreak_inst_i;
+ 
+ // &Force ("output","cp0_yy_clk_en"); @30
+ 
+@@ -753,6 +778,7 @@ ct_cp0_iui  x_ct_cp0_iui (
+   .cp0_iu_ex3_rslt_vld     (cp0_iu_ex3_rslt_vld    ),
+   .cp0_mmu_tlb_all_inv     (cp0_mmu_tlb_all_inv    ),
+   .cp0_mret                (cp0_mret               ),
++  .cp0_dret                (cp0_dret               ),
+   .cp0_rtu_xx_int_b        (cp0_rtu_xx_int_b       ),
+   .cp0_rtu_xx_vec          (cp0_rtu_xx_vec         ),
+   .cp0_sret                (cp0_sret               ),
+@@ -777,6 +803,7 @@ ct_cp0_iui  x_ct_cp0_iui (
+   .iui_regs_ex3_inst_csr   (iui_regs_ex3_inst_csr  ),
+   .iui_regs_inst_mret      (iui_regs_inst_mret     ),
+   .iui_regs_inst_sret      (iui_regs_inst_sret     ),
++  .iui_regs_inst_dret      (iui_regs_inst_dret     ),
+   .iui_regs_inv_expt       (iui_regs_inv_expt      ),
+   .iui_regs_opcode         (iui_regs_opcode        ),
+   .iui_regs_ori_src0       (iui_regs_ori_src0      ),
+@@ -803,6 +830,7 @@ ct_cp0_iui  x_ct_cp0_iui (
+   .regs_iui_int_sel        (regs_iui_int_sel       ),
+   .regs_iui_l2_regs_sel    (regs_iui_l2_regs_sel   ),
+   .regs_iui_pm             (regs_iui_pm            ),
++  .regs_iui_d              (regs_iui_d             ),
+   .regs_iui_reg_idx        (regs_iui_reg_idx       ),
+   .regs_iui_scnt_inv       (regs_iui_scnt_inv      ),
+   .regs_iui_tee_ff         (regs_iui_tee_ff        ),
+@@ -941,6 +969,7 @@ ct_cp0_regs  x_ct_cp0_regs (
+   .cp0_mmu_wdata                   (cp0_mmu_wdata                  ),
+   .cp0_mmu_wreg                    (cp0_mmu_wreg                   ),
+   .cp0_mret                        (cp0_mret                       ),
++  .cp0_dret                        (cp0_dret                       ),
+   .cp0_pad_mstatus                 (cp0_pad_mstatus                ),
+   .cp0_pmp_icg_en                  (cp0_pmp_icg_en                 ),
+   .cp0_pmp_mpp                     (cp0_pmp_mpp                    ),
+@@ -982,6 +1011,7 @@ ct_cp0_regs  x_ct_cp0_regs (
+   .iui_regs_ex3_inst_csr           (iui_regs_ex3_inst_csr          ),
+   .iui_regs_inst_mret              (iui_regs_inst_mret             ),
+   .iui_regs_inst_sret              (iui_regs_inst_sret             ),
++  .iui_regs_inst_dret              (iui_regs_inst_dret             ),
+   .iui_regs_inv_expt               (iui_regs_inv_expt              ),
+   .iui_regs_opcode                 (iui_regs_opcode                ),
+   .iui_regs_ori_src0               (iui_regs_ori_src0              ),
+@@ -1009,6 +1039,7 @@ ct_cp0_regs  x_ct_cp0_regs (
+   .regs_iui_int_sel                (regs_iui_int_sel               ),
+   .regs_iui_l2_regs_sel            (regs_iui_l2_regs_sel           ),
+   .regs_iui_pm                     (regs_iui_pm                    ),
++  .regs_iui_d                      (regs_iui_d                     ),
+   .regs_iui_reg_idx                (regs_iui_reg_idx               ),
+   .regs_iui_scnt_inv               (regs_iui_scnt_inv              ),
+   .regs_iui_tee_ff                 (regs_iui_tee_ff                ),
+@@ -1038,9 +1069,16 @@ ct_cp0_regs  x_ct_cp0_regs (
+   .rtu_cp0_vstart                  (rtu_cp0_vstart                 ),
+   .rtu_cp0_vstart_vld              (rtu_cp0_vstart_vld             ),
+   .rtu_yy_xx_expt_vec              (rtu_yy_xx_expt_vec             ),
+-  .rtu_yy_xx_flush                 (rtu_yy_xx_flush                )
++  .rtu_yy_xx_flush                 (rtu_yy_xx_flush                ),
++
++  // debug request
++  .debug_req_i                     (debug_req_i                    ),
++  // dcsr to ct_rtu_retire
++  .dcsr_value_o                    (dcsr_value_o                   ),
++  .is_vld_ebreak_inst_i            (is_vld_ebreak_inst_i           )
+ );
+ 
++assign debug_mode_o = regs_iui_d;
+ 
+ // &Instance("ct_cp0_lpmd", "x_ct_cp0_lpmd"); @36
+ ct_cp0_lpmd  x_ct_cp0_lpmd (
+diff --git a/C910_RTL_FACTORY/gen_rtl/cpu/rtl/ct_core.v b/C910_RTL_FACTORY/gen_rtl/cpu/rtl/ct_core.v
+index c1e57c2..eedb613 100644
+--- a/C910_RTL_FACTORY/gen_rtl/cpu/rtl/ct_core.v
++++ b/C910_RTL_FACTORY/gen_rtl/cpu/rtl/ct_core.v
+@@ -479,7 +479,10 @@ module ct_core #(
+   rtu_yy_xx_retire0,
+   rtu_yy_xx_retire0_normal,
+   rtu_yy_xx_retire1,
+-  rtu_yy_xx_retire2
++  rtu_yy_xx_retire2,
++
++  // debug request
++  debug_req_i
+ );
+ 
+ //&Ports("compare", "../../../gen_rtl/cpu/rtl/core_golden_port.v");
+@@ -616,6 +619,9 @@ input            mmu_yy_xx_no_op;
+ input            pad_yy_icg_scan_en;                     
+ input            pad_yy_scan_mode;                       
+ input   [63 :0]  pmp_cp0_data;                           
++// debug request
++input            debug_req_i;
++
+ output           cp0_biu_icg_en;                         
+ output  [1  :0]  cp0_biu_lpmd_b;                         
+ output  [15 :0]  cp0_biu_op;                             
+@@ -2470,7 +2476,13 @@ wire             vfpu_rtu_pipe6_cmplt;
+ wire    [6  :0]  vfpu_rtu_pipe6_iid;                     
+ wire             vfpu_rtu_pipe7_cmplt;                   
+ wire    [6  :0]  vfpu_rtu_pipe7_iid;                     
+-
++// debug request
++wire             debug_req_i;
++// is in debug mode
++wire             debug_mode;
++// dcsr to ct_rtu_retire
++wire    [63 :0]  dcsr_value;
++wire             is_vld_ebreak_inst;
+ 
+ // &Force("input", "pad_yy_scan_mode"); @32
+ // &Force("output","rtu_yy_xx_dbgon"); @33
+@@ -3473,7 +3485,12 @@ ct_idu_top  x_ct_idu_top (
+   .vfpu_idu_pipe6_vmla_srcv2_no_fwd        (vfpu_idu_pipe6_vmla_srcv2_no_fwd       ),
+   .vfpu_idu_pipe7_vmla_srcv2_no_fwd        (vfpu_idu_pipe7_vmla_srcv2_no_fwd       ),
+   .vfpu_idu_vdiv_busy                      (vfpu_idu_vdiv_busy                     ),
+-  .vfpu_idu_vdiv_wb_stall                  (vfpu_idu_vdiv_wb_stall                 )
++  .vfpu_idu_vdiv_wb_stall                  (vfpu_idu_vdiv_wb_stall                 ),
++
++  // debug request
++  .debug_req_i                             (debug_req_i                            ),
++  // is in debug mode
++  .debug_mode_i                            (debug_mode                             )
+ );
+ 
+ // &Connect(.cpurst_b   (idu_rst_b)); @52
+@@ -4501,14 +4518,14 @@ ct_cp0_top  x_ct_cp0_top (
+   .biu_cp0_apb_base                (biu_cp0_apb_base               ),
+   .biu_cp0_cmplt                   (biu_cp0_cmplt                  ),
+   .biu_cp0_coreid                  (biu_cp0_coreid                 ),
+-  .biu_cp0_me_int                  (biu_cp0_me_int                 ),
+-  .biu_cp0_ms_int                  (biu_cp0_ms_int                 ),
+-  .biu_cp0_mt_int                  (biu_cp0_mt_int                 ),
++  .biu_cp0_me_int                  (biu_cp0_me_int & ~debug_mode   ),
++  .biu_cp0_ms_int                  (biu_cp0_ms_int & ~debug_mode   ),
++  .biu_cp0_mt_int                  (biu_cp0_mt_int & ~debug_mode   ),
+   .biu_cp0_rdata                   (biu_cp0_rdata                  ),
+   .biu_cp0_rvba                    (biu_cp0_rvba                   ),
+-  .biu_cp0_se_int                  (biu_cp0_se_int                 ),
+-  .biu_cp0_ss_int                  (biu_cp0_ss_int                 ),
+-  .biu_cp0_st_int                  (biu_cp0_st_int                 ),
++  .biu_cp0_se_int                  (biu_cp0_se_int & ~debug_mode   ),
++  .biu_cp0_ss_int                  (biu_cp0_ss_int & ~debug_mode   ),
++  .biu_cp0_st_int                  (biu_cp0_st_int & ~debug_mode   ),
+   .biu_yy_xx_no_op                 (biu_yy_xx_no_op                ),
+   .cp0_biu_icg_en                  (cp0_biu_icg_en                 ),
+   .cp0_biu_lpmd_b                  (cp0_biu_lpmd_b                 ),
+@@ -4717,7 +4734,15 @@ ct_cp0_top  x_ct_cp0_top (
+   .rtu_yy_xx_commit0_iid           (rtu_yy_xx_commit0_iid          ),
+   .rtu_yy_xx_dbgon                 (rtu_yy_xx_dbgon                ),
+   .rtu_yy_xx_expt_vec              (rtu_yy_xx_expt_vec             ),
+-  .rtu_yy_xx_flush                 (rtu_yy_xx_flush                )
++  .rtu_yy_xx_flush                 (rtu_yy_xx_flush                ),
++
++  // debug request
++  .debug_req_i                     (debug_req_i                    ),
++  // is in debug mode
++  .debug_mode_o                    (debug_mode                     ),
++  // dcsr to ct_rtu_retire
++  .dcsr_value_o                    (dcsr_value                     ),
++  .is_vld_ebreak_inst_i            (is_vld_ebreak_inst             )
+ );
+ 
+ // &Connect(.cpurst_b   (idu_rst_b)); @82
+@@ -5179,7 +5204,15 @@ ct_rtu_top  x_ct_rtu_top (
+   .vfpu_rtu_pipe6_cmplt                 (vfpu_rtu_pipe6_cmplt                ),
+   .vfpu_rtu_pipe6_iid                   (vfpu_rtu_pipe6_iid                  ),
+   .vfpu_rtu_pipe7_cmplt                 (vfpu_rtu_pipe7_cmplt                ),
+-  .vfpu_rtu_pipe7_iid                   (vfpu_rtu_pipe7_iid                  )
++  .vfpu_rtu_pipe7_iid                   (vfpu_rtu_pipe7_iid                  ),
++
++  .cp0_yy_priv_mode_i                   (cp0_yy_priv_mode                    ),
++  .cp0_yy_virtual_mode_i                (cp0_yy_virtual_mode                 ),
++  // dcsr to ct_rtu_retire
++  .dcsr_value_i                         (dcsr_value                          ),
++  // is in debug mode
++  .debug_mode_i                         (debug_mode                          ),
++  .is_vld_ebreak_inst_o                 (is_vld_ebreak_inst                  )
+ );
+ 
+ // &Connect(.cpurst_b   (idu_rst_b)); @88
+diff --git a/C910_RTL_FACTORY/gen_rtl/cpu/rtl/ct_top.v b/C910_RTL_FACTORY/gen_rtl/cpu/rtl/ct_top.v
+index d5b1e98..e22fa42 100644
+--- a/C910_RTL_FACTORY/gen_rtl/cpu/rtl/ct_top.v
++++ b/C910_RTL_FACTORY/gen_rtl/cpu/rtl/ct_top.v
+@@ -128,7 +128,9 @@ module ct_top #(
+   x_exit_dbg_req_i,
+   x_exit_dbg_req_o,
+   x_had_dbg_mask,
+-  x_regs_serial_data
++  x_regs_serial_data,
++  // debug request
++  debug_req_i
+ );
+ 
+ // &Ports("compare", "../../../gen_rtl/cpu/rtl/top_golden_port.v"); @28
+@@ -267,6 +269,9 @@ output           x_enter_dbg_req_o;
+ output           x_exit_dbg_req_o;                    
+ output  [63 :0]  x_regs_serial_data;                  
+ 
++// debug request
++input            debug_req_i;
++
+ //&Ports;
+ // &Regs; @30
+ 
+@@ -868,6 +873,8 @@ wire             x_exit_dbg_req_o;
+ wire             x_had_dbg_mask;                      
+ wire    [63 :0]  x_regs_serial_data;                  
+ 
++// debug request
++wire             debug_req_i;
+ 
+ // &Force("input", "pad_core_sleep_in"); @34
+ // &Force("output","core_pad_sleep_out"); @35
+@@ -1335,7 +1342,10 @@ ct_core  x_ct_core (
+   .rtu_yy_xx_retire0                    (rtu_yy_xx_retire0                   ),
+   .rtu_yy_xx_retire0_normal             (rtu_yy_xx_retire0_normal            ),
+   .rtu_yy_xx_retire1                    (rtu_yy_xx_retire1                   ),
+-  .rtu_yy_xx_retire2                    (rtu_yy_xx_retire2                   )
++  .rtu_yy_xx_retire2                    (rtu_yy_xx_retire2                   ),
++
++  // debug req
++  .debug_req_i                          (debug_req_i                         )
+ );
+ 
+ // &Connect(.forever_cpuclk    (coreclk)); @41
+diff --git a/C910_RTL_FACTORY/gen_rtl/cpu/rtl/openC910.v b/C910_RTL_FACTORY/gen_rtl/cpu/rtl/openC910.v
+index 022043d..6500bc6 100644
+--- a/C910_RTL_FACTORY/gen_rtl/cpu/rtl/openC910.v
++++ b/C910_RTL_FACTORY/gen_rtl/cpu/rtl/openC910.v
+@@ -129,7 +129,9 @@ module openC910(
+   time_irq_i,
+   // plic
+   plic_hartx_mint_req_i,
+-  plic_hartx_sint_req_i
++  plic_hartx_sint_req_i,
++  // debug request
++  debug_req_i
+ );
+ 
+ // &Ports("compare", "../../../gen_rtl/cpu/rtl/mp_top_golden_port.v"); @42
+@@ -181,7 +183,8 @@ input            time_irq_i;
+   // plic
+ input   [1  :0]  plic_hartx_mint_req_i;
+ input   [1  :0]  plic_hartx_sint_req_i;
+-
++  // debug request
++input            debug_req_i;
+ 
+ output  [39 :0]  biu_pad_araddr;                
+ output  [1  :0]  biu_pad_arburst;               
+@@ -666,6 +669,8 @@ wire             pll_cpu_clk;
+   // clint
+ wire             ipi_i;
+ wire             time_irq_i;
++  // debug request
++wire             debug_req_i;
+ 
+ wire    [1  :0]  pprot;                         
+ wire    [31 :0]  prdata_clint;                  
+@@ -706,6 +711,19 @@ wire    [39 :0]  sysio_xx_apb_base;
+ wire    [63 :0]  sysio_xx_time;                 
+ wire             trst_b;                        
+ 
++// async debug signal
++reg              debug_req_i_q, debug_req_i_q_q; // 2 stage registers to eliminate metastable state
++
++always @(posedge forever_cpuclk or negedge cpurst_b) begin
++  if(~cpurst_b) begin
++    debug_req_i_q   <= 1'b0;
++    debug_req_i_q_q <= 1'b0;
++  end else begin
++    debug_req_i_q   <= debug_req_i;
++    debug_req_i_q_q <= debug_req_i_q;
++  end
++end
++
+ //==========================================================
+ //  Instance top module
+ //==========================================================
+@@ -976,7 +994,9 @@ ct_top  x_ct_top_0 (
+   .x_exit_dbg_req_i        (1'b0    ),
+   .x_exit_dbg_req_o        (        ),
+   .x_had_dbg_mask          (1'b0    ),
+-  .x_regs_serial_data      (        )
++  .x_regs_serial_data      (        ),
++  // debug request
++  .debug_req_i             (debug_req_i_q_q        )
+ );
+ 
+ 
+diff --git a/C910_RTL_FACTORY/gen_rtl/idu/rtl/ct_idu_id_decd.v b/C910_RTL_FACTORY/gen_rtl/idu/rtl/ct_idu_id_decd.v
+index 0340e69..b2f38d4 100644
+--- a/C910_RTL_FACTORY/gen_rtl/idu/rtl/ct_idu_id_decd.v
++++ b/C910_RTL_FACTORY/gen_rtl/idu/rtl/ct_idu_id_decd.v
+@@ -1646,6 +1646,9 @@ begin
+     15'b001100000011100:begin //mret
+       //deal in fence
+       end
++    15'b011110100011100:begin //dret
++      //deal in fence
++    end
+     15'b???????00111100:begin //csrrw
+       //deal in fence
+       end
+diff --git a/C910_RTL_FACTORY/gen_rtl/idu/rtl/ct_idu_id_decd_special.v b/C910_RTL_FACTORY/gen_rtl/idu/rtl/ct_idu_id_decd_special.v
+index 6865d35..33b9647 100644
+--- a/C910_RTL_FACTORY/gen_rtl/idu/rtl/ct_idu_id_decd_special.v
++++ b/C910_RTL_FACTORY/gen_rtl/idu/rtl/ct_idu_id_decd_special.v
+@@ -202,6 +202,7 @@ assign x_fence_type[1] = (x_inst[31:0] == 32'h10200073) //sret
+ //                      || (x_inst[31:0] == 32'h00000073) //ecall
+ //                      || (x_inst[31:0] == 32'h00100073) //ebreak
+                       || (x_inst[31:0] == 32'h30200073) //mret
++                      || (x_inst[31:0] == 32'h7b200073) //dret
+                       || (x_inst[31:0] == 32'h10500073) //wfi
+ //                      || (x_inst[15:0] == 16'h9002) //c.ebreak
+                       || ({x_inst[14:12],x_inst[6:0]} == 10'b001_1110011) //csrrw
+diff --git a/C910_RTL_FACTORY/gen_rtl/idu/rtl/ct_idu_id_dp.v b/C910_RTL_FACTORY/gen_rtl/idu/rtl/ct_idu_id_dp.v
+index b832146..6d7c55c 100644
+--- a/C910_RTL_FACTORY/gen_rtl/idu/rtl/ct_idu_id_dp.v
++++ b/C910_RTL_FACTORY/gen_rtl/idu/rtl/ct_idu_id_dp.v
+@@ -77,7 +77,12 @@ module ct_idu_id_dp(
+   pad_yy_icg_scan_en,
+   rtu_idu_flush_fe,
+   split_long_ctrl_id_stall,
+-  split_long_ctrl_inst_vld
++  split_long_ctrl_inst_vld,
++
++  // debug request
++  debug_req_i,
++  // is in debug mode
++  debug_mode_i
+ );
+ 
+ // &Ports; @28
+@@ -113,6 +118,11 @@ input            ifu_idu_ib_pipedown_gateclk;
+ input            iu_yy_xx_cancel;                
+ input            pad_yy_icg_scan_en;             
+ input            rtu_idu_flush_fe;               
++// debug request
++input            debug_req_i;
++// is in debug mode
++input            debug_mode_i;
++
+ output           dp_ctrl_id_inst0_fence;         
+ output           dp_ctrl_id_inst0_normal;        
+ output           dp_ctrl_id_inst0_split_long;    
+@@ -409,7 +419,17 @@ wire    [177:0]  split_short1_dp_inst1_data;
+ wire    [3  :0]  split_short2_dp_dep_info;       
+ wire    [177:0]  split_short2_dp_inst0_data;     
+ wire    [177:0]  split_short2_dp_inst1_data;     
+-
++// debug request
++wire             debug_req_i;
++wire             debug_req_rdy;
++wire             debug_req_i_hsk;
++reg              debug_req_pending_q;
++wire             debug_req_pending_d;
++wire             debug_req_pending_q_hsk;
++wire             debug_req_pending_set, debug_req_pending_clr;
++wire             debug_req_pending_en;
++// is in debug mode
++wire             debug_mode_i;
+ 
+ 
+ //==========================================================
+@@ -1174,11 +1194,35 @@ end
+ //----------------------------------------------------------
+ //            normal expt inst expt data select
+ //----------------------------------------------------------
++// debug request handling, it need to be assigned to a instruction, if there is no valid instruction at id stage, wait until there is one
++assign debug_req_rdy  = ctrl_dp_id_inst0_vld & 
++                        ~id_inst0_data[ID_EXPT_VLD] & 
++                        ~dp_ctrl_id_inst0_fence &
++                        ~ctrl_dp_id_inst1_vld &
++                        ~ctrl_dp_id_inst2_vld;
++assign debug_req_i_hsk       = debug_req_i &  debug_req_rdy & ~debug_mode_i;
++assign debug_req_pending_set = debug_req_i & ~debug_req_rdy & ~debug_mode_i;
++assign debug_req_pending_clr = debug_req_pending_q_hsk;
++assign debug_req_pending_d   = debug_req_pending_set | ~debug_req_pending_clr;
++assign debug_req_pending_en  = debug_req_pending_set | debug_req_pending_clr;
++assign debug_req_pending_q_hsk = debug_req_pending_q & debug_req_rdy;
++always @(posedge forever_cpuclk or negedge cpurst_b) begin
++  if(~cpurst_b) begin
++    debug_req_pending_q <= 1'b0;
++  end else begin
++    if(debug_req_pending_en) begin
++      debug_req_pending_q <= debug_req_pending_d;
++    end
++  end
++end
++
+ //ifu expt inst, illegal and bkpt treat as normal inst
+ //add control path for power optimization
+ assign id_expt_inst0_expt_vld      = ctrl_dp_id_inst0_vld
+                                      && (id_inst0_data[ID_EXPT_VLD]
+-                                      || id_inst0_illegal);
++                                      || id_inst0_illegal
++                                      || debug_req_i_hsk
++                                      || debug_req_pending_q_hsk);
+ assign id_expt_inst1_expt_vld      = ctrl_dp_id_inst1_vld
+                                      && (id_inst1_data[ID_EXPT_VLD]
+                                       || id_inst1_illegal);
+@@ -1194,11 +1238,15 @@ assign id_expt_inst2_high_hw_expt  = id_inst2_data[ID_EXPT_VLD]
+                                      && id_inst2_data[ID_HIGH_HW_EXPT];
+ 
+ // &CombBeg; @526
+-always @( id_inst0_data[36:32])
++always @( id_inst0_data[36:32]
++       or debug_req_i_hsk
++       or debug_req_pending_q_hsk)
+ begin
+-  if(id_inst0_data[ID_EXPT_VLD])
++  if(id_inst0_data[ID_EXPT_VLD]) // ecc error exception from ifu
+     id_expt_inst0_expt_vec[4:0]    = {1'b0,id_inst0_data[ID_EXPT_VEC:ID_EXPT_VEC-3]};
+-  else //illegal
++  else if(debug_req_i_hsk || debug_req_pending_q_hsk)
++    id_expt_inst0_expt_vec[4:0]    = 5'd24; // according to riscv privileged spec, the exception code 24 is designated for custom use, cva6 also uses this code
++  else // illegal instruction from idu
+     id_expt_inst0_expt_vec[4:0]    = 5'd2;
+ // &CombEnd; @531
+ end
+diff --git a/C910_RTL_FACTORY/gen_rtl/idu/rtl/ct_idu_rf_pipe0_decd.v b/C910_RTL_FACTORY/gen_rtl/idu/rtl/ct_idu_rf_pipe0_decd.v
+index 76d44be..51960fe 100644
+--- a/C910_RTL_FACTORY/gen_rtl/idu/rtl/ct_idu_rf_pipe0_decd.v
++++ b/C910_RTL_FACTORY/gen_rtl/idu/rtl/ct_idu_rf_pipe0_decd.v
+@@ -583,6 +583,12 @@ begin
+       decd_32_func[4:0]                    = 5'b01010;
+       decd_32_sel[ALU_SEL-1:0]             = NON_ALU;
+       end
++    15'b011110100011100:begin //dret
++      //like mret
++      decd_32_eu_sel[EU_WIDTH-1:0]         = CP0;
++      decd_32_func[4:0]                    = 5'b01011;
++      decd_32_sel[ALU_SEL-1:0]             = NON_ALU;
++    end
+     15'b???????00111100:begin //csrrw
+       //deal in fence
+       decd_32_eu_sel[EU_WIDTH-1:0]         = CP0;
+diff --git a/C910_RTL_FACTORY/gen_rtl/idu/rtl/ct_idu_top.v b/C910_RTL_FACTORY/gen_rtl/idu/rtl/ct_idu_top.v
+index d5ac566..2ac2dfe 100644
+--- a/C910_RTL_FACTORY/gen_rtl/idu/rtl/ct_idu_top.v
++++ b/C910_RTL_FACTORY/gen_rtl/idu/rtl/ct_idu_top.v
+@@ -793,7 +793,12 @@ module ct_idu_top(
+   vfpu_idu_pipe6_vmla_srcv2_no_fwd,
+   vfpu_idu_pipe7_vmla_srcv2_no_fwd,
+   vfpu_idu_vdiv_busy,
+-  vfpu_idu_vdiv_wb_stall
++  vfpu_idu_vdiv_wb_stall,
++
++  // debug request
++  debug_req_i,
++  // is in debug mode
++  debug_mode_i
+ );
+ 
+ // &Ports; @25
+@@ -1211,6 +1216,11 @@ input            vfpu_idu_pipe6_vmla_srcv2_no_fwd;
+ input            vfpu_idu_pipe7_vmla_srcv2_no_fwd;       
+ input            vfpu_idu_vdiv_busy;                     
+ input            vfpu_idu_vdiv_wb_stall;                 
++// debug request
++input            debug_req_i;
++  // is in debug mode
++input            debug_mode_i;
++
+ output  [6  :0]  idu_cp0_fesr_acc_updt_val;              
+ output           idu_cp0_fesr_acc_updt_vld;              
+ output  [4  :0]  idu_cp0_rf_func;                        
+@@ -3331,7 +3341,10 @@ wire    [8  :0]  vrt_dp_inst3_srcv0_data;
+ wire    [8  :0]  vrt_dp_inst3_srcv1_data;                
+ wire    [9  :0]  vrt_dp_inst3_srcv2_data;                
+ wire    [8  :0]  vrt_dp_inst3_srcvm_data;                
+-
++// debug request
++wire             debug_req_i;
++// is in debug mode
++wire             debug_mode_i;
+ 
+ //==========================================================
+ //                       ID Stage
+@@ -3464,7 +3477,12 @@ ct_idu_id_dp  x_ct_idu_id_dp (
+   .pad_yy_icg_scan_en              (pad_yy_icg_scan_en             ),
+   .rtu_idu_flush_fe                (rtu_idu_flush_fe               ),
+   .split_long_ctrl_id_stall        (split_long_ctrl_id_stall       ),
+-  .split_long_ctrl_inst_vld        (split_long_ctrl_inst_vld       )
++  .split_long_ctrl_inst_vld        (split_long_ctrl_inst_vld       ),
++
++  // debug request
++  .debug_req_i                     (debug_req_i                    ),
++  // is in debug mode
++  .debug_mode_i                    (debug_mode_i                   )
+ );
+ 
+ // &Instance("ct_idu_id_fence", "x_ct_idu_id_fence"); @34
+diff --git a/C910_RTL_FACTORY/gen_rtl/ifu/rtl/ct_ifu_vector.v b/C910_RTL_FACTORY/gen_rtl/ifu/rtl/ct_ifu_vector.v
+index 6c438cf..177ebe2 100644
+--- a/C910_RTL_FACTORY/gen_rtl/ifu/rtl/ct_ifu_vector.v
++++ b/C910_RTL_FACTORY/gen_rtl/ifu/rtl/ct_ifu_vector.v
+@@ -81,6 +81,7 @@ wire            cpurst_b;
+ wire            arch_rst_b;
+ wire    [1 :0]  expt_mode;              
+ wire    [38:0]  expt_virtual_pc;        
++wire    [39:0]  debug_virtual_pc;        
+ wire            forever_cpuclk;         
+ wire            ifu_cp0_rst_inv_req;    
+ wire            ifu_cp0_rst_mrvbr_req;
+@@ -108,7 +109,10 @@ wire            vector_pcgen_reset_on;
+ wire            vector_reset_on;        
+ wire            vector_sm_on;           
+ wire    [38:0]  virtual_pc;             
++wire            debug_expt;
+ 
++parameter DmBaseAddress = 39'h0;
++parameter HaltAddress   = 39'h800;
+ 
+ parameter PC_WIDTH = 40;
+ // &Force("bus","cp0_ifu_rvbr",39,0); @28
+@@ -240,12 +244,16 @@ assign pc_load                   = (!rtu_ifu_xx_dbgon) &&
+ //rvbr is 20 bit and the following 2 bit of it must be 2'b00
+ // &Force("bus","cp0_ifu_vbr",39,0); @126
+ assign reset_expt             = (rtu_ifu_xx_expt_vec[4:0] == 5'b0);
++assign debug_expt             = (rtu_ifu_xx_expt_vec[4:0] == 5'd24) || // external debug req
++                                (rtu_ifu_xx_expt_vec[4:0] == 5'd3); // ebreak
++assign debug_virtual_pc       = DmBaseAddress + HaltAddress;
+ assign expt_mode[1:0]         = cp0_ifu_vbr[1:0];
+ assign int_vld                = rtu_ifu_xx_expt_vec[5];
+ assign expt_virtual_pc[PC_WIDTH-2:0]  = (expt_mode[0] && int_vld) 
+                                       ? ( {cp0_ifu_vbr[PC_WIDTH-1:2],1'b0} 
+                                         + {33'b0,rtu_ifu_xx_expt_vec[4:0],1'b0})
+-                                      : {cp0_ifu_vbr[PC_WIDTH-1:2],1'b0};
++                                      : (debug_expt ? debug_virtual_pc[PC_WIDTH-1:1]
++                                        : {cp0_ifu_vbr[PC_WIDTH-1:2],1'b0});
+ assign reset_virtual_pc[PC_WIDTH-2:0] = cp0_ifu_rvbr[PC_WIDTH-1:1];
+ assign virtual_pc[PC_WIDTH-2:0]       = (reset_expt)
+                                       ? reset_virtual_pc[PC_WIDTH-2:0]
+diff --git a/C910_RTL_FACTORY/gen_rtl/rtu/rtl/ct_rtu_retire.v b/C910_RTL_FACTORY/gen_rtl/rtu/rtl/ct_rtu_retire.v
+index c4cda49..6628d42 100644
+--- a/C910_RTL_FACTORY/gen_rtl/rtu/rtl/ct_rtu_retire.v
++++ b/C910_RTL_FACTORY/gen_rtl/rtu/rtl/ct_rtu_retire.v
+@@ -324,7 +324,15 @@ module ct_rtu_retire(
+   rtu_yy_xx_dbgon,
+   rtu_yy_xx_expt_vec,
+   rtu_yy_xx_flush,
+-  rtu_yy_xx_retire0_normal
++  rtu_yy_xx_retire0_normal,
++
++  cp0_yy_priv_mode_i,
++  cp0_yy_virtual_mode_i,
++  // dcsr to ct_rtu_retire
++  dcsr_value_i,
++  // is in debug mode
++  debug_mode_i,
++  is_vld_ebreak_inst_o
+ );
+ 
+ // &Ports; @30
+@@ -369,7 +377,7 @@ input   [38:0]  rob_retire_inst0_cur_pc;
+ input           rob_retire_inst0_data_bkpt;          
+ input           rob_retire_inst0_dbg_disable;        
+ input           rob_retire_inst0_efpc_vld;           
+-input   [3 :0]  rob_retire_inst0_expt_vec;           
++input   [4 :0]  rob_retire_inst0_expt_vec;           
+ input           rob_retire_inst0_expt_vld;           
+ input           rob_retire_inst0_fp_dirty;           
+ input           rob_retire_inst0_high_hw_expt;       
+@@ -639,6 +647,14 @@ output  [5 :0]  rtu_yy_xx_expt_vec;
+ output          rtu_yy_xx_flush;                     
+ output          rtu_yy_xx_retire0_normal;            
+ 
++input   [1 :0]  cp0_yy_priv_mode_i;
++input           cp0_yy_virtual_mode_i;
++// dcsr to ct_rtu_retire
++input   [63 :0]  dcsr_value_i;
++// is in debug mode
++input            debug_mode_i;
++output           is_vld_ebreak_inst_o;
++
+ // &Regs; @31
+ reg     [1 :0]  ae_cur_state;                        
+ reg     [1 :0]  ae_next_state;                       
+@@ -819,7 +835,7 @@ wire    [38:0]  rob_retire_inst0_cur_pc;
+ wire            rob_retire_inst0_data_bkpt;          
+ wire            rob_retire_inst0_dbg_disable;        
+ wire            rob_retire_inst0_efpc_vld;           
+-wire    [3 :0]  rob_retire_inst0_expt_vec;           
++wire    [4 :0]  rob_retire_inst0_expt_vec;           
+ wire            rob_retire_inst0_expt_vld;           
+ wire            rob_retire_inst0_fp_dirty;           
+ wire            rob_retire_inst0_high_hw_expt;       
+@@ -1059,7 +1075,16 @@ wire            rtu_yy_xx_flush;
+ wire            rtu_yy_xx_retire0_normal;            
+ wire            sm_clk;                              
+ wire            sm_clk_en;                           
+-
++wire    [1 :0]  cp0_yy_priv_mode_i;
++wire            cp0_yy_virtual_mode_i;
++// dcsr to ct_rtu_retire
++wire    [63 :0] dcsr_value_i;
++// is in debug mode
++wire            debug_mode_i;
++wire            is_vld_ebreak_inst_o;
++wire            is_ebreak_inst;
++reg             is_vld_ebreak_inst;
++wire            rob_retire_inst0_expt_vld_checked_dcsr;
+ 
+ 
+ //==========================================================
+@@ -1157,9 +1182,47 @@ assign rtu_idu_srt_en    = retire_srt_en;
+ //==========================================================
+ //                   Retire valid signals
+ //==========================================================
++// for ebreak inst, if it is effictive depends on the dcsr
++assign is_ebreak_inst = rob_retire_inst0_expt_vld
++                        && (rob_retire_inst0_expt_vec[4:0] == 5'd3);
++
++always @(is_ebreak_inst
++      or cp0_yy_priv_mode_i
++      or cp0_yy_virtual_mode_i
++      or dcsr_value_i)
++begin
++  is_vld_ebreak_inst = 1'b0;
++  if(!debug_mode_i) begin
++    if(is_ebreak_inst) begin
++      case(cp0_yy_priv_mode_i[1:0])
++        2'b11: begin // M mode
++          is_vld_ebreak_inst = dcsr_value_i[15]; // ebreakm
++        end
++        2'b01: begin // S mode
++          is_vld_ebreak_inst = cp0_yy_virtual_mode_i ? dcsr_value_i[17] : dcsr_value_i[13]; // ebreakvs or ebreaks
++        end
++        2'b00: begin // U mode
++          is_vld_ebreak_inst = cp0_yy_virtual_mode_i ? dcsr_value_i[16] : dcsr_value_i[12]; // ebreakvu or ebreaku
++        end
++        default:;
++      endcase
++    end
++  end else begin
++    if(is_ebreak_inst) begin
++      is_vld_ebreak_inst = 1'b1;
++    end
++  end
++end
++
++assign is_vld_ebreak_inst_o = is_vld_ebreak_inst;
++
++assign rob_retire_inst0_expt_vld_checked_dcsr = is_ebreak_inst ? 
++                                                is_vld_ebreak_inst :
++                                                rob_retire_inst0_expt_vld;
++
+ //retire inst 0 may expt vld, but retire inst 1/2 are always normal
+ assign retire_inst0_normal_retire     = rob_retire_inst0_vld
+-                                        && !rob_retire_inst0_expt_vld;
++                                        && !rob_retire_inst0_expt_vld_checked_dcsr;
+ assign retire_inst1_normal_retire     = rob_retire_inst1_vld;
+ assign retire_inst2_normal_retire     = rob_retire_inst2_vld;
+ 
+@@ -1188,8 +1251,8 @@ assign retire_pst_wb_retire_inst2_ereg_vld = rob_retire_inst2_pst_ereg_vld;
+ //----------------------------------------------------------
+ //                 Prepare Exception Source
+ //----------------------------------------------------------
+-assign retire_expt_inst          = rob_retire_inst0_expt_vld;
+-assign retire_expt_mmu_bad_vpn   = rob_retire_inst0_expt_vld
++assign retire_expt_inst          = rob_retire_inst0_expt_vld_checked_dcsr;
++assign retire_expt_mmu_bad_vpn   = rob_retire_inst0_expt_vld_checked_dcsr
+                                    && (rob_retire_inst0_expt_vec[3:2] == 2'b11);
+ 
+ //----------------------------------------------------------
+@@ -1204,7 +1267,7 @@ assign retire_expt_int           = rob_retire_inst0_int_vld
+ //----------------------------------------------------------
+ assign retire_expt_vec[5:0] = (retire_expt_int)
+                               ? {1'b1, rob_retire_inst0_int_vec[4:0]}
+-                              : {2'b0, rob_retire_inst0_expt_vec[3:0]};
++                              : {1'b0, rob_retire_inst0_expt_vec[4:0]};
+ 
+ //----------------------------------------------------------
+ //                         MTVAL
+@@ -1312,7 +1375,7 @@ assign rtu_cp0_expt_gateclk_vld = retire_expt_gateclk_vld
+ 
+ assign rtu_cp0_expt_mtval[63:0] = retire_expt_mtval[63:0];
+ 
+-assign retire_inst0_epc[38:0]  = (rob_retire_inst0_expt_vld
++assign retire_inst0_epc[38:0]  = (rob_retire_inst0_expt_vld_checked_dcsr
+                                   || rob_retire_inst0_inst_bkpt)
+                                  ? rob_retire_inst0_cur_pc[38:0]
+                                  : rob_retire_inst0_next_pc[38:0];
+@@ -1674,7 +1737,7 @@ assign rtu_had_xx_dbg_ack_pc                 = dbgreq_ack;
+ assign rtu_had_dbg_ack_info                  = dbgreq_ack_jdbreq
+                                                && !ifu_dbg_mode_on;
+ //assign rtu_had_xx_pc[38:0]                   = retire_inst0_epc[38:0];
+-assign rtu_had_xx_pc[38:0]                   = (rob_retire_inst0_expt_vld
++assign rtu_had_xx_pc[38:0]                   = (rob_retire_inst0_expt_vld_checked_dcsr
+                                                 || rob_retire_inst0_inst_bkpt)
+                                                ? rob_retire_inst0_cur_pc[38:0]
+                                                : rob_retire_rob_cur_pc[38:0];
+diff --git a/C910_RTL_FACTORY/gen_rtl/rtu/rtl/ct_rtu_rob.v b/C910_RTL_FACTORY/gen_rtl/rtu/rtl/ct_rtu_rob.v
+index 9cc368b..4ac490d 100644
+--- a/C910_RTL_FACTORY/gen_rtl/rtu/rtl/ct_rtu_rob.v
++++ b/C910_RTL_FACTORY/gen_rtl/rtu/rtl/ct_rtu_rob.v
+@@ -462,7 +462,7 @@ output  [38:0]  rob_retire_inst0_cur_pc;
+ output          rob_retire_inst0_data_bkpt;          
+ output          rob_retire_inst0_dbg_disable;        
+ output          rob_retire_inst0_efpc_vld;           
+-output  [3 :0]  rob_retire_inst0_expt_vec;           
++output  [4 :0]  rob_retire_inst0_expt_vec;           
+ output          rob_retire_inst0_expt_vld;           
+ output          rob_retire_inst0_fp_dirty;           
+ output          rob_retire_inst0_high_hw_expt;       
+@@ -1428,7 +1428,7 @@ wire    [38:0]  rob_retire_inst0_cur_pc;
+ wire            rob_retire_inst0_data_bkpt;          
+ wire            rob_retire_inst0_dbg_disable;        
+ wire            rob_retire_inst0_efpc_vld;           
+-wire    [3 :0]  rob_retire_inst0_expt_vec;           
++wire    [4 :0]  rob_retire_inst0_expt_vec;           
+ wire            rob_retire_inst0_expt_vld;           
+ wire            rob_retire_inst0_fp_dirty;           
+ wire            rob_retire_inst0_high_hw_expt;       
+diff --git a/C910_RTL_FACTORY/gen_rtl/rtu/rtl/ct_rtu_rob_expt.v b/C910_RTL_FACTORY/gen_rtl/rtu/rtl/ct_rtu_rob_expt.v
+index 274827f..8f8dd41 100644
+--- a/C910_RTL_FACTORY/gen_rtl/rtu/rtl/ct_rtu_rob_expt.v
++++ b/C910_RTL_FACTORY/gen_rtl/rtu/rtl/ct_rtu_rob_expt.v
+@@ -156,7 +156,7 @@ output          expt_entry_vld;
+ output          rob_retire_inst0_bht_mispred;        
+ output          rob_retire_inst0_bkpt;               
+ output          rob_retire_inst0_efpc_vld;           
+-output  [3 :0]  rob_retire_inst0_expt_vec;           
++output  [4 :0]  rob_retire_inst0_expt_vec;           
+ output          rob_retire_inst0_expt_vld;           
+ output          rob_retire_inst0_high_hw_expt;       
+ output          rob_retire_inst0_immu_expt;          
+@@ -191,7 +191,7 @@ wire            expt_cmplt;
+ wire            expt_entry_bht_mispred;              
+ wire            expt_entry_bkpt;                     
+ wire            expt_entry_efpc_vld;                 
+-wire    [3 :0]  expt_entry_expt_vec;                 
++wire    [4 :0]  expt_entry_expt_vec;                 
+ wire            expt_entry_expt_vld;                 
+ wire            expt_entry_expt_vld_updt_val;        
+ wire            expt_entry_flush;                    
+@@ -276,7 +276,7 @@ wire    [6 :0]  rob_expt_inst0_iid;
+ wire            rob_retire_inst0_bht_mispred;        
+ wire            rob_retire_inst0_bkpt;               
+ wire            rob_retire_inst0_efpc_vld;           
+-wire    [3 :0]  rob_retire_inst0_expt_vec;           
++wire    [4 :0]  rob_retire_inst0_expt_vec;           
+ wire            rob_retire_inst0_expt_vld;           
+ wire            rob_retire_inst0_high_hw_expt;       
+ wire            rob_retire_inst0_immu_expt;          
+@@ -611,7 +611,7 @@ assign expt_entry_bht_mispred   = expt_entry_data[55];
+ assign expt_entry_mtval[39:0]   = expt_entry_data[54:15];
+ assign expt_entry_immu_expt     = expt_entry_data[14];
+ assign expt_entry_high_hw_expt  = expt_entry_data[13];
+-//assign expt_entry_expt_vec[4] = expt_entry_data[12];
++assign expt_entry_expt_vec[4]   = expt_entry_data[12];
+ assign expt_entry_expt_vec[3:0] = expt_entry_data[11:8];
+ assign expt_entry_expt_vld      = expt_entry_data[7];
+ assign expt_entry_iid[6:0]      = expt_entry_data[6:0];
+@@ -623,7 +623,7 @@ assign expt_entry_iid[6:0]      = expt_entry_data[6:0];
+ // &Force("output","rob_retire_inst0_spec_fail_no_ssf"); @265
+ assign rob_retire_inst0_expt_vld         = retire_expt_inst0_abnormal
+                                            && expt_entry_expt_vld;
+-assign rob_retire_inst0_expt_vec[3:0]    = expt_entry_expt_vec[3:0];
++assign rob_retire_inst0_expt_vec[4:0]    = expt_entry_expt_vec[4:0];
+ assign rob_retire_inst0_immu_expt        = expt_entry_immu_expt;
+ assign rob_retire_inst0_high_hw_expt     = expt_entry_high_hw_expt;
+ assign rob_retire_inst0_inst_flush       = retire_expt_inst0_abnormal
+diff --git a/C910_RTL_FACTORY/gen_rtl/rtu/rtl/ct_rtu_top.v b/C910_RTL_FACTORY/gen_rtl/rtu/rtl/ct_rtu_top.v
+index 3ef2469..59a4145 100644
+--- a/C910_RTL_FACTORY/gen_rtl/rtu/rtl/ct_rtu_top.v
++++ b/C910_RTL_FACTORY/gen_rtl/rtu/rtl/ct_rtu_top.v
+@@ -465,7 +465,15 @@ module ct_rtu_top(
+   vfpu_rtu_pipe6_cmplt,
+   vfpu_rtu_pipe6_iid,
+   vfpu_rtu_pipe7_cmplt,
+-  vfpu_rtu_pipe7_iid
++  vfpu_rtu_pipe7_iid,
++
++  cp0_yy_priv_mode_i,
++  cp0_yy_virtual_mode_i,
++  // dcsr to ct_rtu_retire
++  dcsr_value_i,
++  // is in debug mode
++  debug_mode_i,
++  is_vld_ebreak_inst_o
+ );
+ 
+ // &Ports; @25
+@@ -923,6 +931,14 @@ output           rtu_yy_xx_retire0_normal;
+ output           rtu_yy_xx_retire1;                   
+ output           rtu_yy_xx_retire2;                   
+ 
++input   [1  :0] cp0_yy_priv_mode_i;
++input           cp0_yy_virtual_mode_i;
++// dcsr to ct_rtu_retire
++input   [63 :0]  dcsr_value_i;
++// is in debug mode
++input            debug_mode_i;
++output           is_vld_ebreak_inst_o;
++
+ // &Regs; @26
+ 
+ // &Wires; @27
+@@ -1187,7 +1203,7 @@ wire    [38 :0]  rob_retire_inst0_cur_pc;
+ wire             rob_retire_inst0_data_bkpt;          
+ wire             rob_retire_inst0_dbg_disable;        
+ wire             rob_retire_inst0_efpc_vld;           
+-wire    [3  :0]  rob_retire_inst0_expt_vec;           
++wire    [4  :0]  rob_retire_inst0_expt_vec;           
+ wire             rob_retire_inst0_expt_vld;           
+ wire             rob_retire_inst0_fp_dirty;           
+ wire             rob_retire_inst0_high_hw_expt;       
+@@ -1546,6 +1562,14 @@ wire    [6  :0]  vfpu_rtu_pipe6_iid;
+ wire             vfpu_rtu_pipe7_cmplt;                
+ wire    [6  :0]  vfpu_rtu_pipe7_iid;                  
+ 
++wire    [1  :0]  cp0_yy_priv_mode_i;
++wire             cp0_yy_virtual_mode_i;
++// dcsr to ct_rtu_retire
++wire    [63 :0]  dcsr_value_i;
++// is in debug mode
++wire             debug_mode_i;
++
++wire             is_vld_ebreak_inst_o;
+ 
+ 
+ //==========================================================
+@@ -2441,7 +2465,15 @@ ct_rtu_retire  x_ct_rtu_retire (
+   .rtu_yy_xx_dbgon                      (rtu_yy_xx_dbgon                     ),
+   .rtu_yy_xx_expt_vec                   (rtu_yy_xx_expt_vec                  ),
+   .rtu_yy_xx_flush                      (rtu_yy_xx_flush                     ),
+-  .rtu_yy_xx_retire0_normal             (rtu_yy_xx_retire0_normal            )
++  .rtu_yy_xx_retire0_normal             (rtu_yy_xx_retire0_normal            ),
++
++  .cp0_yy_priv_mode_i                   (cp0_yy_priv_mode_i                  ),
++  .cp0_yy_virtual_mode_i                (cp0_yy_virtual_mode_i               ),
++  // dcsr to ct_rtu_retire
++  .dcsr_value_i                         (dcsr_value_i                        ),
++  // is in debug mode
++  .debug_mode_i                         (debug_mode_i                        ),
++  .is_vld_ebreak_inst_o                 (is_vld_ebreak_inst_o                )
+ );
+ 
+ 
+diff --git a/smart_run/logical/common/cpu_sub_system_axi.v b/smart_run/logical/common/cpu_sub_system_axi.v
+index d66ca87..bfaf504 100644
+--- a/smart_run/logical/common/cpu_sub_system_axi.v
++++ b/smart_run/logical/common/cpu_sub_system_axi.v
+@@ -47,6 +47,8 @@ module cpu_sub_system_axi
+   // plic
+   plic_hartx_mint_req_i                    ,
+   plic_hartx_sint_req_i                    ,
++  // debug request (async)
++  debug_req_i                              ,
+ 
+   biu_pad_araddr                           ,
+   biu_pad_arburst                          ,
+@@ -119,6 +121,8 @@ input                  time_irq_i                               ;
+ // plic
+ input      [1  :0]     plic_hartx_mint_req_i                    ;
+ input      [1  :0]     plic_hartx_sint_req_i                    ;
++// debug request (async)
++input                  debug_req_i                              ;
+ 
+ output     [39 : 0]    biu_pad_araddr                           ;
+ output     [1 : 0]     biu_pad_arburst                          ;
+@@ -192,6 +196,8 @@ wire                   time_irq_i                               ;
+ // plic
+ wire       [1  :0]     plic_hartx_mint_req_i                    ;
+ wire       [1  :0]     plic_hartx_sint_req_i                    ;
++// debug request (async)
++wire                   debug_req_i                              ;
+ 
+ wire       [39 : 0]    biu_pad_araddr                           ;
+ wire       [1 : 0]     biu_pad_arburst                          ;
+@@ -378,7 +384,9 @@ rv_integration_platform  x_rv_integration_platform (
+     .time_irq_i                                   (time_irq_i                               ),
+       // plic
+     .plic_hartx_mint_req_i                        (plic_hartx_mint_req_i                    ),
+-    .plic_hartx_sint_req_i                        (plic_hartx_sint_req_i                    )
++    .plic_hartx_sint_req_i                        (plic_hartx_sint_req_i                    ),
++      // debug request (async)
++    .debug_req_i                                  (debug_req_i                              )
+   );
+ 
+ 
+diff --git a/smart_run/logical/common/rv_integration_platform.v b/smart_run/logical/common/rv_integration_platform.v
+index 0923174..dc4117b 100644
+--- a/smart_run/logical/common/rv_integration_platform.v
++++ b/smart_run/logical/common/rv_integration_platform.v
+@@ -61,6 +61,8 @@ module rv_integration_platform
+   // plic
+   plic_hartx_mint_req_i                    ,
+   plic_hartx_sint_req_i                    ,
++  // debug request (async)
++  debug_req_i                              ,
+ 
+   biu_pad_araddr                           ,
+   biu_pad_arburst                          ,
+@@ -174,6 +176,8 @@ input                  time_irq_i                               ;
+   // plic
+ input      [1  :0]     plic_hartx_mint_req_i                    ;
+ input      [1  :0]     plic_hartx_sint_req_i                    ;
++  // debug request (async)
++input                  debug_req_i                              ;
+ 
+ output     [39 : 0]    biu_pad_araddr                           ;
+ output     [1 : 0]     biu_pad_arburst                          ;
+@@ -284,6 +288,8 @@ wire                   time_irq_i                               ;
+ // plic
+ wire       [1  :0]     plic_hartx_mint_req_i                    ;
+ wire       [1  :0]     plic_hartx_sint_req_i                    ;
++// debug request (async)
++wire                   debug_req_i                              ;
+ 
+ wire       [39 : 0]    biu_pad_araddr                           ;
+ wire       [1 : 0]     biu_pad_arburst                          ;
+@@ -458,7 +464,9 @@ openC910 x_cpu_top(
+     .time_irq_i                                   (time_irq_i                               ),
+     // plic
+     .plic_hartx_mint_req_i                        (plic_hartx_mint_req_i                    ),
+-    .plic_hartx_sint_req_i                        (plic_hartx_sint_req_i                    )
++    .plic_hartx_sint_req_i                        (plic_hartx_sint_req_i                    ),
++    // debug request (async)
++    .debug_req_i                                  (debug_req_i                              )
+   );
+ 
+ endmodule
+-- 
+2.39.3
+

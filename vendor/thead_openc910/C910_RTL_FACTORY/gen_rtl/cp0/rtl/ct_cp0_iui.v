@@ -37,6 +37,7 @@ module ct_cp0_iui(
   cp0_iu_ex3_rslt_vld,
   cp0_mmu_tlb_all_inv,
   cp0_mret,
+  cp0_dret,
   cp0_rtu_xx_int_b,
   cp0_rtu_xx_vec,
   cp0_sret,
@@ -61,6 +62,7 @@ module ct_cp0_iui(
   iui_regs_ex3_inst_csr,
   iui_regs_inst_mret,
   iui_regs_inst_sret,
+  iui_regs_inst_dret,
   iui_regs_inv_expt,
   iui_regs_opcode,
   iui_regs_ori_src0,
@@ -87,6 +89,7 @@ module ct_cp0_iui(
   regs_iui_int_sel,
   regs_iui_l2_regs_sel,
   regs_iui_pm,
+  regs_iui_d,
   regs_iui_reg_idx,
   regs_iui_scnt_inv,
   regs_iui_tee_ff,
@@ -140,6 +143,7 @@ input            regs_iui_hpcp_scr_inv;
 input   [14 :0]  regs_iui_int_sel;       
 input            regs_iui_l2_regs_sel;   
 input   [1  :0]  regs_iui_pm;            
+input            regs_iui_d;
 input   [3  :0]  regs_iui_reg_idx;       
 input            regs_iui_scnt_inv;      
 input            regs_iui_tee_ff;        
@@ -175,6 +179,7 @@ output  [6  :0]  cp0_iu_ex3_rslt_preg;
 output           cp0_iu_ex3_rslt_vld;    
 output           cp0_mmu_tlb_all_inv;    
 output           cp0_mret;               
+output           cp0_dret;
 output           cp0_rtu_xx_int_b;       
 output  [4  :0]  cp0_rtu_xx_vec;         
 output           cp0_sret;               
@@ -185,6 +190,7 @@ output           iui_regs_csrw;
 output           iui_regs_ex3_inst_csr;  
 output           iui_regs_inst_mret;     
 output           iui_regs_inst_sret;     
+output           iui_regs_inst_dret;
 output           iui_regs_inv_expt;      
 output  [31 :0]  iui_regs_opcode;        
 output  [63 :0]  iui_regs_ori_src0;      
@@ -210,6 +216,7 @@ reg              iui_ex1_inst_csrrw;
 reg              iui_ex1_inst_csrrwi;    
 reg              iui_ex1_inst_mret;      
 reg              iui_ex1_inst_sret;      
+reg              iui_ex1_inst_dret;
 reg              iui_ex1_inst_wfi;       
 reg     [31 :0]  iui_ex1_opcode;         
 reg     [6  :0]  iui_ex1_preg;           
@@ -255,6 +262,7 @@ wire    [6  :0]  cp0_iu_ex3_rslt_preg;
 wire             cp0_iu_ex3_rslt_vld;    
 wire             cp0_mmu_tlb_all_inv;    
 wire             cp0_mret;               
+wire             cp0_dret;
 wire             cp0_rtu_xx_int_b;       
 wire    [4  :0]  cp0_rtu_xx_vec;         
 wire             cp0_select;             
@@ -287,6 +295,7 @@ wire             inst_lpmd;
 wire             inst_lpmd_ex1_ex2;      
 wire             inst_mret_ex2;          
 wire             inst_sret_ex2;          
+wire             inst_dret_ex2;          
 wire             int_vld;                
 wire    [11 :0]  iui_addr;               
 wire             iui_clk_en;             
@@ -306,10 +315,12 @@ wire             iui_inst_csrrsi;
 wire             iui_inst_csrrw;         
 wire             iui_inst_csrrwi;        
 wire             iui_inst_mret;          
+wire             iui_inst_dret;
 wire             iui_inst_ro;            
 wire             iui_inst_sret;          
 wire             iui_inst_wfi;           
 wire             iui_m_mode;             
+wire             iui_d_mode;
 wire    [31 :0]  iui_opcode;             
 wire    [6  :0]  iui_preg;               
 wire             iui_privilege;          
@@ -319,6 +330,7 @@ wire             iui_regs_csrw;
 wire             iui_regs_ex3_inst_csr;  
 wire             iui_regs_inst_mret;     
 wire             iui_regs_inst_sret;     
+wire             iui_regs_inst_dret;
 wire             iui_regs_inv_expt;      
 wire    [31 :0]  iui_regs_opcode;        
 wire    [63 :0]  iui_regs_ori_src0;      
@@ -355,6 +367,7 @@ wire             regs_iui_hpcp_scr_inv;
 wire    [14 :0]  regs_iui_int_sel;       
 wire             regs_iui_l2_regs_sel;   
 wire    [1  :0]  regs_iui_pm;            
+wire             regs_iui_d;
 wire    [3  :0]  regs_iui_reg_idx;       
 wire             regs_iui_scnt_inv;      
 wire             regs_iui_tee_ff;        
@@ -375,6 +388,7 @@ wire             rf_inst_csrrw;
 wire             rf_inst_csrrwi;         
 wire             rf_inst_mret;           
 wire             rf_inst_sret;           
+wire             rf_inst_dret;           
 wire             rf_inst_wfi;            
 wire             rst_inv_done;           
 wire             rtu_yy_xx_commit0;      
@@ -707,6 +721,13 @@ parameter HEDELEG   = 12'h602;
 
 parameter VSSTATUS  = 12'h200;
 
+// 6. Debug CSR
+parameter DCSR      = 12'h7b0;
+parameter DPC       = 12'h7b1;
+parameter DSCRATCH0 = 12'h7b2;
+parameter DSCRATCH1 = 12'h7b3;
+
+
 //==========================================================
 //                Handling the CP0 operations
 //==========================================================
@@ -716,15 +737,17 @@ parameter VSSTATUS  = 12'h200;
 // WFI:    5'b01001
 // SRET:   5'b01000
 // MRET:   5'b01010
+// DRET:   5'b01011
 // CSRRW:  5'b10000
 // CSRRS:  5'b10001
 // CSRRC:  5'b10010
 // CSRRWI: 5'b10011
 // CSRRSI: 5'b10100
 // CSRRCI: 5'b10101
-assign rf_inst_wfi    = idu_cp0_rf_func[3] &&  idu_cp0_rf_func[0];
+assign rf_inst_wfi    = idu_cp0_rf_func[3] && !idu_cp0_rf_func[1] &&  idu_cp0_rf_func[0];
 assign rf_inst_sret   = idu_cp0_rf_func[3] && !idu_cp0_rf_func[1] && !idu_cp0_rf_func[0];
-assign rf_inst_mret   = idu_cp0_rf_func[3] &&  idu_cp0_rf_func[1];
+assign rf_inst_mret   = idu_cp0_rf_func[3] &&  idu_cp0_rf_func[1] && !idu_cp0_rf_func[0];
+assign rf_inst_dret   = idu_cp0_rf_func[3] &&  idu_cp0_rf_func[1] &&  idu_cp0_rf_func[0];
 assign rf_inst_csrrw  = idu_cp0_rf_func[4] &&  idu_cp0_rf_func[2:0] == 3'b000;
 assign rf_inst_csrrs  = idu_cp0_rf_func[4] &&  idu_cp0_rf_func[2:0] == 3'b001;
 assign rf_inst_csrrc  = idu_cp0_rf_func[4] &&  idu_cp0_rf_func[2:0] == 3'b010;
@@ -738,6 +761,7 @@ begin
     iui_ex1_inst_wfi      <= 1'b0; 
     iui_ex1_inst_sret     <= 1'b0; 
     iui_ex1_inst_mret     <= 1'b0; 
+    iui_ex1_inst_dret     <= 1'b0; 
     iui_ex1_inst_csrrw    <= 1'b0; 
     iui_ex1_inst_csrrs    <= 1'b0; 
     iui_ex1_inst_csrrc    <= 1'b0; 
@@ -753,6 +777,7 @@ begin
     iui_ex1_inst_wfi      <= rf_inst_wfi; 
     iui_ex1_inst_sret     <= rf_inst_sret; 
     iui_ex1_inst_mret     <= rf_inst_mret; 
+    iui_ex1_inst_dret     <= rf_inst_dret;
     iui_ex1_inst_csrrw    <= rf_inst_csrrw; 
     iui_ex1_inst_csrrs    <= rf_inst_csrrs; 
     iui_ex1_inst_csrrc    <= rf_inst_csrrc; 
@@ -768,6 +793,7 @@ begin
     iui_ex1_inst_wfi      <= iui_ex1_inst_wfi; 
     iui_ex1_inst_sret     <= iui_ex1_inst_sret; 
     iui_ex1_inst_mret     <= iui_ex1_inst_mret; 
+    iui_ex1_inst_dret     <= iui_ex1_inst_dret; 
     iui_ex1_inst_csrrw    <= iui_ex1_inst_csrrw; 
     iui_ex1_inst_csrrs    <= iui_ex1_inst_csrrs; 
     iui_ex1_inst_csrrc    <= iui_ex1_inst_csrrc; 
@@ -784,6 +810,7 @@ end
 assign iui_inst_wfi     = iui_ex1_inst_wfi; 
 assign iui_inst_sret    = iui_ex1_inst_sret; 
 assign iui_inst_mret    = iui_ex1_inst_mret; 
+assign iui_inst_dret    = iui_ex1_inst_dret; 
 assign iui_inst_csrrw   = iui_ex1_inst_csrrw; 
 assign iui_inst_csrrs   = iui_ex1_inst_csrrs; 
 assign iui_inst_csrrc   = iui_ex1_inst_csrrc; 
@@ -1069,6 +1096,13 @@ begin
 
     //FXCR      : addr_inv = 1'b0;
 
+    // 6. Debug CSR
+    DCSR      : addr_inv = 1'b0;
+    DPC       : addr_inv = 1'b0;
+    DSCRATCH0 : addr_inv = 1'b0;
+    DSCRATCH1 : addr_inv = 1'b0;
+
+
     default   : addr_inv = 1'b1; 
   endcase
 // &CombEnd; @728
@@ -1315,6 +1349,7 @@ assign iui_m_mode = regs_iui_pm[1:0] == 2'b11;
 assign iui_s_mode = regs_iui_pm[1:0] == 2'b01;
 assign iui_u_mode = regs_iui_pm[1:0] == 2'b00;
 assign iui_v_mode = regs_iui_v       == 1'b1;
+assign iui_d_mode = regs_iui_d       == 1'b1;
 
 // vs-mode access hs-mode csr or inst
 assign iui_hs_inv = 1'b0;
@@ -1325,6 +1360,7 @@ assign iui_s_inv  = iui_s_mode
                     ((iui_addr[11:10] != 2'b01) && 
                      (iui_addr[7:0] != 8'b1100_0010)) // exclude MCOR here, allow MCOR to be writen in S mode
                     || iui_inst_mret
+                    || iui_inst_dret
                     || iui_inst_sret && regs_iui_tsr
                     || iui_inst_wfi && regs_iui_tw
                     || iui_inst_csr && iui_addr[11:0] == SATP && regs_iui_tvm
@@ -1336,6 +1372,7 @@ assign iui_s_inv  = iui_s_mode
 assign iui_u_inv  = iui_u_mode  
                 && (iui_inst_csr && iui_addr[9:8] != 2'b00
                     || iui_inst_mret
+                    || iui_inst_dret
                     || iui_inst_sret
                     || iui_inst_wfi
                     || iui_inst_csr && regs_iui_ucnt_inv
@@ -1374,6 +1411,7 @@ assign iui_tee_inv = iui_inst_csr && regs_iui_chk_vld
 //in debug mode or m-mode set, the cp0 insctuction
 //execute with privilege
 assign iui_privilege = (rtu_yy_xx_dbgon
+                    || iui_d_mode
                     || iui_m_mode
                     || iui_s_mode && !iui_v_mode && !iui_s_inv
                     || iui_s_mode && iui_v_mode  && !iui_s_inv && !iui_hs_inv
@@ -1387,6 +1425,7 @@ assign iui_privilege = (rtu_yy_xx_dbgon
 assign inst_csr_ex1      = cp0_ex1_select && iui_privilege && iui_inst_csr;
 assign inst_mret_ex2     = cp0_ex2_select && iui_privilege && iui_inst_mret;
 assign inst_sret_ex2     = cp0_ex2_select && iui_privilege && iui_inst_sret;
+assign inst_dret_ex2     = cp0_ex2_select && iui_privilege && iui_inst_dret;
 
 //signal for lpmd enter into low power mode, not valid in ex3 stage
 assign inst_lpmd_ex1_ex2 = (cp0_ex1_select || cp0_ex2_select) && iui_privilege
@@ -1408,6 +1447,7 @@ assign inst_lpmd   = cp0_select && iui_privilege && iui_inst_wfi;
 //assign cp0_csr     = cp0_select && iui_inst_csr;
 assign cp0_mret    = cp0_select && iui_inst_mret;
 assign cp0_sret    = cp0_select && iui_inst_sret;
+assign cp0_dret    = cp0_select && iui_inst_dret;
 //assign cp0_wfi     = cp0_select && iui_inst_wfi;
 
 //==========================================================
@@ -1427,6 +1467,7 @@ end
 assign iui_regs_sel          = inst_csr_ex2 && cp0_ex2_select;
 assign iui_regs_inst_mret    = inst_mret_ex2;
 assign iui_regs_inst_sret    = inst_sret_ex2;
+assign iui_regs_inst_dret    = inst_dret_ex2;
 assign iui_regs_csr_wr       = iui_inst_csr && !iui_inst_ro;
 assign iui_regs_addr[11:0]   = iui_addr[11:0];
 assign iui_regs_inv_expt     = !iui_privilege && cp0_ex2_select;

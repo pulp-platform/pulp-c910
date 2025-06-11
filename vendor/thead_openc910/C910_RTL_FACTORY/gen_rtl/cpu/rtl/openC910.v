@@ -129,7 +129,9 @@ module openC910(
   time_irq_i,
   // plic
   plic_hartx_mint_req_i,
-  plic_hartx_sint_req_i
+  plic_hartx_sint_req_i,
+  // debug request
+  debug_req_i
 );
 
 // &Ports("compare", "../../../gen_rtl/cpu/rtl/mp_top_golden_port.v"); @42
@@ -181,7 +183,8 @@ input            time_irq_i;
   // plic
 input   [1  :0]  plic_hartx_mint_req_i;
 input   [1  :0]  plic_hartx_sint_req_i;
-
+  // debug request
+input            debug_req_i;
 
 output  [39 :0]  biu_pad_araddr;                
 output  [1  :0]  biu_pad_arburst;               
@@ -666,6 +669,8 @@ wire             pll_cpu_clk;
   // clint
 wire             ipi_i;
 wire             time_irq_i;
+  // debug request
+wire             debug_req_i;
 
 wire    [1  :0]  pprot;                         
 wire    [31 :0]  prdata_clint;                  
@@ -705,6 +710,19 @@ wire             sysio_piu1_st_int;
 wire    [39 :0]  sysio_xx_apb_base;             
 wire    [63 :0]  sysio_xx_time;                 
 wire             trst_b;                        
+
+// async debug signal
+reg              debug_req_i_q, debug_req_i_q_q; // 2 stage registers to eliminate metastable state
+
+always @(posedge forever_cpuclk or negedge cpurst_b) begin
+  if(~cpurst_b) begin
+    debug_req_i_q   <= 1'b0;
+    debug_req_i_q_q <= 1'b0;
+  end else begin
+    debug_req_i_q   <= debug_req_i;
+    debug_req_i_q_q <= debug_req_i_q;
+  end
+end
 
 //==========================================================
 //  Instance top module
@@ -976,7 +994,9 @@ ct_top  x_ct_top_0 (
   .x_exit_dbg_req_i        (1'b0    ),
   .x_exit_dbg_req_o        (        ),
   .x_had_dbg_mask          (1'b0    ),
-  .x_regs_serial_data      (        )
+  .x_regs_serial_data      (        ),
+  // debug request
+  .debug_req_i             (debug_req_i_q_q        )
 );
 
 

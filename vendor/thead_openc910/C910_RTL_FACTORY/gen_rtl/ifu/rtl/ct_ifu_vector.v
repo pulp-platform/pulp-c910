@@ -81,6 +81,7 @@ wire            cpurst_b;
 wire            arch_rst_b;
 wire    [1 :0]  expt_mode;              
 wire    [38:0]  expt_virtual_pc;        
+wire    [39:0]  debug_virtual_pc;        
 wire            forever_cpuclk;         
 wire            ifu_cp0_rst_inv_req;    
 wire            ifu_cp0_rst_mrvbr_req;
@@ -108,7 +109,10 @@ wire            vector_pcgen_reset_on;
 wire            vector_reset_on;        
 wire            vector_sm_on;           
 wire    [38:0]  virtual_pc;             
+wire            debug_expt;
 
+parameter DmBaseAddress = 39'h0;
+parameter HaltAddress   = 39'h800;
 
 parameter PC_WIDTH = 40;
 // &Force("bus","cp0_ifu_rvbr",39,0); @28
@@ -240,12 +244,16 @@ assign pc_load                   = (!rtu_ifu_xx_dbgon) &&
 //rvbr is 20 bit and the following 2 bit of it must be 2'b00
 // &Force("bus","cp0_ifu_vbr",39,0); @126
 assign reset_expt             = (rtu_ifu_xx_expt_vec[4:0] == 5'b0);
+assign debug_expt             = (rtu_ifu_xx_expt_vec[4:0] == 5'd24) || // external debug req
+                                (rtu_ifu_xx_expt_vec[4:0] == 5'd3); // ebreak
+assign debug_virtual_pc       = DmBaseAddress + HaltAddress;
 assign expt_mode[1:0]         = cp0_ifu_vbr[1:0];
 assign int_vld                = rtu_ifu_xx_expt_vec[5];
 assign expt_virtual_pc[PC_WIDTH-2:0]  = (expt_mode[0] && int_vld) 
                                       ? ( {cp0_ifu_vbr[PC_WIDTH-1:2],1'b0} 
                                         + {33'b0,rtu_ifu_xx_expt_vec[4:0],1'b0})
-                                      : {cp0_ifu_vbr[PC_WIDTH-1:2],1'b0};
+                                      : (debug_expt ? debug_virtual_pc[PC_WIDTH-1:1]
+                                        : {cp0_ifu_vbr[PC_WIDTH-1:2],1'b0});
 assign reset_virtual_pc[PC_WIDTH-2:0] = cp0_ifu_rvbr[PC_WIDTH-1:1];
 assign virtual_pc[PC_WIDTH-2:0]       = (reset_expt)
                                       ? reset_virtual_pc[PC_WIDTH-2:0]

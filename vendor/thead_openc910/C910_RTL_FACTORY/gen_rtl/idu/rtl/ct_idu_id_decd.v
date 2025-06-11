@@ -1646,6 +1646,9 @@ begin
     15'b001100000011100:begin //mret
       //deal in fence
       end
+    15'b011110100011100:begin //dret
+      //deal in fence
+    end
     15'b???????00111100:begin //csrrw
       //deal in fence
       end
