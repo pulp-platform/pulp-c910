@@ -2730,7 +2730,9 @@ always @( rtu_cp0_expt_vld_no_dbg
        or mpp[1:0]
        or iui_regs_inst_sret
        or mdeleg_vld
-       or iui_regs_inst_mret)
+       or iui_regs_inst_mret
+       or iui_regs_inst_dret
+       or dcsr_prv[1:0])
 begin
   if(rtu_cp0_expt_vld_no_dbg && !mdeleg_vld)
     pm_wdata[1:0] = 2'b11;
@@ -2740,6 +2742,8 @@ begin
     pm_wdata[1:0] = mpp[1:0];
   else if(iui_regs_inst_sret)
     pm_wdata[1:0] = {1'b0, sstatus_spp};
+  else if(iui_regs_inst_dret)
+    pm_wdata[1:0] = dcsr_prv[1:0]; // DRET instruction
   else
     pm_wdata[1:0] = pm[1:0];
 // &CombEnd; @1900
@@ -3886,6 +3890,8 @@ begin
     debug_mode_q   <= 1'b1;
   end else if(debug_req_i) begin
     debug_mode_q   <= 1'b1;
+  end else if(is_vld_ebreak_inst_i && !debug_mode_q) begin
+    debug_mode_q   <= 1'b1;
   end else begin
     debug_mode_q   <= debug_mode_q;
   end
@@ -3952,7 +3958,7 @@ begin
   if(!cpurst_b) begin
     dcsr_cause     <= 3'b0;
     dcsr_v         <= 1'b0;
-    dcsr_prv       <= 2'b0;
+    dcsr_prv       <= 2'b11; // M-Mode
   end else if(dcsr_local_en) begin
     dcsr_cause     <= iui_regs_src0[8:6];
     dcsr_v         <= iui_regs_src0[5];

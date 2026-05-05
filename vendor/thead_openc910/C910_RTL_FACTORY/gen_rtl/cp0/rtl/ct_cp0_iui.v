@@ -1440,7 +1440,7 @@ assign inst_csr_wr = cp0_select && iui_privilege && iui_inst_csr
                   && !iui_inst_ro;
 
 //low power insctuction
-assign inst_lpmd   = cp0_select && iui_privilege && iui_inst_wfi;
+assign inst_lpmd   = cp0_select && iui_privilege && iui_inst_wfi && !iui_d_mode;
 
 //instruction type singel for flush and iu special generation
 //ignore psr s bit only indicate insctuction type information
