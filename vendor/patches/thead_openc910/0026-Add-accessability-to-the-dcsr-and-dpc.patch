@@ -1,0 +1,29 @@
+From f7d010614424de327a57bbf2cfa4c029436fd81c Mon Sep 17 00:00:00 2001
+From: "sem26f50 Linqi Xu (linqixu)" <sem26f50@pisoc7.ee.ethz.ch>
+Date: Tue, 9 Jun 2026 16:31:37 +0200
+Subject: [PATCH] Add accessability to the dcsr and dpc.
+
+---
+ C910_RTL_FACTORY/gen_rtl/cp0/rtl/ct_cp0_regs.v | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/C910_RTL_FACTORY/gen_rtl/cp0/rtl/ct_cp0_regs.v b/C910_RTL_FACTORY/gen_rtl/cp0/rtl/ct_cp0_regs.v
+index 8d89e0f..8447343 100644
+--- a/C910_RTL_FACTORY/gen_rtl/cp0/rtl/ct_cp0_regs.v
++++ b/C910_RTL_FACTORY/gen_rtl/cp0/rtl/ct_cp0_regs.v
+@@ -4063,6 +4063,7 @@ assign cp0_regs_sel = iui_regs_addr[11:8] == 4'hF  // M-Infor
+                    || iui_regs_addr[11:8] == 4'h8  // FXCR
+                    || iui_regs_addr[11:8] == 4'h6  // Hypervisor CSR
+                    || iui_regs_addr[11:8] == 4'h2  // VS CSR
++                   || iui_regs_addr[11:2] == 10'h1EC // Debug CSR: 0x7b0-0x7b3
+                    || iui_regs_addr[11:4] == 8'hC2;// Vector
+ 
+ assign pmp_regs_sel = iui_regs_addr[11:4] == 8'h3A
+@@ -4663,4 +4664,3 @@ assign cp0_pad_mstatus[63:0] = mstatus_value[63:0];
+ // &ModuleEnd; @4181
+ endmodule
+ 
+-
+-- 
+2.43.5
+

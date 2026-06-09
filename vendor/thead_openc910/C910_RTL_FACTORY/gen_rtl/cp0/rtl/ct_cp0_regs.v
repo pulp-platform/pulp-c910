@@ -4063,6 +4063,7 @@ assign cp0_regs_sel = iui_regs_addr[11:8] == 4'hF  // M-Infor
                    || iui_regs_addr[11:8] == 4'h8  // FXCR
                    || iui_regs_addr[11:8] == 4'h6  // Hypervisor CSR
                    || iui_regs_addr[11:8] == 4'h2  // VS CSR
+                   || iui_regs_addr[11:2] == 10'h1EC // Debug CSR: 0x7b0-0x7b3
                    || iui_regs_addr[11:4] == 8'hC2;// Vector
 
 assign pmp_regs_sel = iui_regs_addr[11:4] == 8'h3A
@@ -4662,5 +4663,4 @@ assign cp0_pad_mstatus[63:0] = mstatus_value[63:0];
 
 // &ModuleEnd; @4181
 endmodule
-
 
