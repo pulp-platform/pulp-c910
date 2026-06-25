@@ -1199,7 +1199,8 @@ assign debug_req_rdy  = ctrl_dp_id_inst0_vld &
                         ~id_inst0_data[ID_EXPT_VLD] & 
                         ~dp_ctrl_id_inst0_fence &
                         ~ctrl_dp_id_inst1_vld &
-                        ~ctrl_dp_id_inst2_vld;
+                        ~ctrl_dp_id_inst2_vld &
+                        ~ctrl_dp_id_stall;
 assign debug_req_i_hsk       = debug_req_i &  debug_req_rdy & ~debug_mode_i;
 assign debug_req_pending_set = debug_req_i & ~debug_req_rdy & ~debug_mode_i;
 assign debug_req_pending_clr = debug_req_pending_q_hsk;
@@ -1817,5 +1818,4 @@ end
 
 // &ModuleEnd; @896
 endmodule
-
 
