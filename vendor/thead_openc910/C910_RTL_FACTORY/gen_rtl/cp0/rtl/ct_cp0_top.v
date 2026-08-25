@@ -647,6 +647,7 @@ wire             arch_rst_b;
 wire             forever_cpuclk;                 
 wire             pipe4_fencet;
 wire             had_cp0_xx_dbg;                 
+wire             debug_wakeup_req;
 wire             hpcp_cp0_cmplt;                 
 wire    [63 :0]  hpcp_cp0_data;                  
 wire             hpcp_cp0_int_vld;               
@@ -1079,6 +1080,7 @@ ct_cp0_regs  x_ct_cp0_regs (
 );
 
 assign debug_mode_o = regs_iui_d;
+assign debug_wakeup_req = had_cp0_xx_dbg | debug_req_i;
 
 // &Instance("ct_cp0_lpmd", "x_ct_cp0_lpmd"); @36
 ct_cp0_lpmd  x_ct_cp0_lpmd (
@@ -1091,7 +1093,7 @@ ct_cp0_lpmd  x_ct_cp0_lpmd (
   .cp0_yy_clk_en      (cp0_yy_clk_en     ),
   .cpurst_b           (cpurst_b          ),
   .forever_cpuclk     (forever_cpuclk    ),
-  .had_cp0_xx_dbg     (had_cp0_xx_dbg    ),
+  .had_cp0_xx_dbg     (debug_wakeup_req  ),
   .ifu_yy_xx_no_op    (ifu_yy_xx_no_op   ),
   .inst_lpmd_ex1_ex2  (inst_lpmd_ex1_ex2 ),
   .lpmd_cmplt         (lpmd_cmplt        ),

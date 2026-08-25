@@ -423,6 +423,8 @@ wire    [177:0]  split_short2_dp_inst1_data;
 wire             debug_req_i;
 wire             debug_req_rdy;
 wire             debug_req_i_hsk;
+reg              debug_req_consumed_q;
+wire             debug_req_accept;
 reg              debug_req_pending_q;
 wire             debug_req_pending_d;
 wire             debug_req_pending_q_hsk;
@@ -1198,15 +1200,30 @@ end
 assign debug_req_rdy  = ctrl_dp_id_inst0_vld & 
                         ~id_inst0_data[ID_EXPT_VLD] & 
                         ~dp_ctrl_id_inst0_fence &
-                        // ~ctrl_dp_id_inst1_vld &
-                        // ~ctrl_dp_id_inst2_vld &
                         ~ctrl_dp_id_stall;
-assign debug_req_i_hsk       = debug_req_i &  debug_req_rdy & ~debug_mode_i;
-assign debug_req_pending_set = debug_req_i & ~debug_req_rdy & ~debug_mode_i;
-assign debug_req_pending_clr = debug_req_pending_q_hsk;
+// A debug request may remain asserted until the debug module observes halt.
+// Once either the direct or pending path accepts the request, mark it consumed
+// and suppress further debug-exception injection until debug_req_i is deasserted.
+assign debug_req_i_hsk       = debug_req_i & debug_req_rdy & ~debug_mode_i
+                             & ~debug_req_consumed_q;
+assign debug_req_pending_set = debug_req_i & ~debug_req_rdy & ~debug_mode_i
+                             & ~debug_req_consumed_q;
+assign debug_req_pending_clr = debug_req_pending_q_hsk | debug_mode_i;
 assign debug_req_pending_d   = debug_req_pending_set | ~debug_req_pending_clr;
 assign debug_req_pending_en  = debug_req_pending_set | debug_req_pending_clr;
-assign debug_req_pending_q_hsk = debug_req_pending_q & debug_req_rdy;
+assign debug_req_pending_q_hsk = debug_req_pending_q & debug_req_rdy & ~debug_mode_i
+                               & ~debug_req_consumed_q;
+assign debug_req_accept = debug_req_i_hsk | debug_req_pending_q_hsk;
+
+always @(posedge forever_cpuclk or negedge cpurst_b) begin
+  if(~cpurst_b)
+    debug_req_consumed_q <= 1'b0;
+  else if(!debug_req_i)
+    debug_req_consumed_q <= 1'b0;
+  else if(debug_req_accept)
+    debug_req_consumed_q <= 1'b1;
+end
+
 always @(posedge forever_cpuclk or negedge cpurst_b) begin
   if(~cpurst_b) begin
     debug_req_pending_q <= 1'b0;

@@ -3888,9 +3888,8 @@ begin
     debug_mode_q   <= 1'b0;
   end else if(rtu_cp0_expt_vld_dbg) begin
     debug_mode_q   <= 1'b1;
-  end else if(debug_req_i) begin
-    debug_mode_q   <= 1'b1;
-  end else if(is_vld_ebreak_inst_i && !debug_mode_q) begin
+  end
+  else if(is_vld_ebreak_inst_i && !debug_mode_q) begin
     debug_mode_q   <= 1'b1;
   end else begin
     debug_mode_q   <= debug_mode_q;
