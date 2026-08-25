@@ -128,7 +128,9 @@ module ct_top #(
   x_exit_dbg_req_i,
   x_exit_dbg_req_o,
   x_had_dbg_mask,
-  x_regs_serial_data
+  x_regs_serial_data,
+  // debug request
+  debug_req_i
 );
 
 // &Ports("compare", "../../../gen_rtl/cpu/rtl/top_golden_port.v"); @28
@@ -266,6 +268,9 @@ output           x_dbg_ack_pc;
 output           x_enter_dbg_req_o;                   
 output           x_exit_dbg_req_o;                    
 output  [63 :0]  x_regs_serial_data;                  
+
+// debug request
+input            debug_req_i;
 
 //&Ports;
 // &Regs; @30
@@ -868,6 +873,8 @@ wire             x_exit_dbg_req_o;
 wire             x_had_dbg_mask;                      
 wire    [63 :0]  x_regs_serial_data;                  
 
+// debug request
+wire             debug_req_i;
 
 // &Force("input", "pad_core_sleep_in"); @34
 // &Force("output","core_pad_sleep_out"); @35
@@ -1335,7 +1342,10 @@ ct_core  x_ct_core (
   .rtu_yy_xx_retire0                    (rtu_yy_xx_retire0                   ),
   .rtu_yy_xx_retire0_normal             (rtu_yy_xx_retire0_normal            ),
   .rtu_yy_xx_retire1                    (rtu_yy_xx_retire1                   ),
-  .rtu_yy_xx_retire2                    (rtu_yy_xx_retire2                   )
+  .rtu_yy_xx_retire2                    (rtu_yy_xx_retire2                   ),
+
+  // debug req
+  .debug_req_i                          (debug_req_i                         )
 );
 
 // &Connect(.forever_cpuclk    (coreclk)); @41

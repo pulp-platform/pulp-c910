@@ -136,7 +136,9 @@ module c910_axi_wrap #(
     .time_irq_i           ( time_irq_i                  ),
     // plic
     .plic_hartx_mint_req_i( plic_hartx_mint_req_i       ),
-    .plic_hartx_sint_req_i( plic_hartx_sint_req_i       )
+    .plic_hartx_sint_req_i( plic_hartx_sint_req_i       ),
+    // debug request
+    .debug_req_i          ( debug_req_i                 )
   );
 
   assign c910_axi_req.aw.qos    = '0;

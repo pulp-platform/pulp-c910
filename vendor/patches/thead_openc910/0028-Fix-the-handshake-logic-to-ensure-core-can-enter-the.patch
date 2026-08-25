@@ -1,0 +1,28 @@
+From 93693bea8fe29432eb64c4d79fe80bb460a9e72f Mon Sep 17 00:00:00 2001
+From: Yizhen Xu <linqi.xu@inf.ethz.ch>
+Date: Mon, 27 Jul 2026 17:14:40 +0200
+Subject: [PATCH] Fix the handshake logic to ensure core can enter the debug
+ mode
+
+---
+ C910_RTL_FACTORY/gen_rtl/idu/rtl/ct_idu_id_dp.v | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/C910_RTL_FACTORY/gen_rtl/idu/rtl/ct_idu_id_dp.v b/C910_RTL_FACTORY/gen_rtl/idu/rtl/ct_idu_id_dp.v
+index ae225da..62143fc 100644
+--- a/C910_RTL_FACTORY/gen_rtl/idu/rtl/ct_idu_id_dp.v
++++ b/C910_RTL_FACTORY/gen_rtl/idu/rtl/ct_idu_id_dp.v
+@@ -1198,8 +1198,8 @@ end
+ assign debug_req_rdy  = ctrl_dp_id_inst0_vld & 
+                         ~id_inst0_data[ID_EXPT_VLD] & 
+                         ~dp_ctrl_id_inst0_fence &
+-                        ~ctrl_dp_id_inst1_vld &
+-                        ~ctrl_dp_id_inst2_vld &
++                        // ~ctrl_dp_id_inst1_vld &
++                        // ~ctrl_dp_id_inst2_vld &
+                         ~ctrl_dp_id_stall;
+ assign debug_req_i_hsk       = debug_req_i &  debug_req_rdy & ~debug_mode_i;
+ assign debug_req_pending_set = debug_req_i & ~debug_req_rdy & ~debug_mode_i;
+-- 
+2.43.5
+

@@ -793,7 +793,12 @@ module ct_idu_top(
   vfpu_idu_pipe6_vmla_srcv2_no_fwd,
   vfpu_idu_pipe7_vmla_srcv2_no_fwd,
   vfpu_idu_vdiv_busy,
-  vfpu_idu_vdiv_wb_stall
+  vfpu_idu_vdiv_wb_stall,
+
+  // debug request
+  debug_req_i,
+  // is in debug mode
+  debug_mode_i
 );
 
 // &Ports; @25
@@ -1211,6 +1216,11 @@ input            vfpu_idu_pipe6_vmla_srcv2_no_fwd;
 input            vfpu_idu_pipe7_vmla_srcv2_no_fwd;       
 input            vfpu_idu_vdiv_busy;                     
 input            vfpu_idu_vdiv_wb_stall;                 
+// debug request
+input            debug_req_i;
+  // is in debug mode
+input            debug_mode_i;
+
 output  [6  :0]  idu_cp0_fesr_acc_updt_val;              
 output           idu_cp0_fesr_acc_updt_vld;              
 output  [4  :0]  idu_cp0_rf_func;                        
@@ -3331,7 +3341,10 @@ wire    [8  :0]  vrt_dp_inst3_srcv0_data;
 wire    [8  :0]  vrt_dp_inst3_srcv1_data;                
 wire    [9  :0]  vrt_dp_inst3_srcv2_data;                
 wire    [8  :0]  vrt_dp_inst3_srcvm_data;                
-
+// debug request
+wire             debug_req_i;
+// is in debug mode
+wire             debug_mode_i;
 
 //==========================================================
 //                       ID Stage
@@ -3464,7 +3477,12 @@ ct_idu_id_dp  x_ct_idu_id_dp (
   .pad_yy_icg_scan_en              (pad_yy_icg_scan_en             ),
   .rtu_idu_flush_fe                (rtu_idu_flush_fe               ),
   .split_long_ctrl_id_stall        (split_long_ctrl_id_stall       ),
-  .split_long_ctrl_inst_vld        (split_long_ctrl_inst_vld       )
+  .split_long_ctrl_inst_vld        (split_long_ctrl_inst_vld       ),
+
+  // debug request
+  .debug_req_i                     (debug_req_i                    ),
+  // is in debug mode
+  .debug_mode_i                    (debug_mode_i                   )
 );
 
 // &Instance("ct_idu_id_fence", "x_ct_idu_id_fence"); @34

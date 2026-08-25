@@ -202,6 +202,7 @@ assign x_fence_type[1] = (x_inst[31:0] == 32'h10200073) //sret
 //                      || (x_inst[31:0] == 32'h00000073) //ecall
 //                      || (x_inst[31:0] == 32'h00100073) //ebreak
                       || (x_inst[31:0] == 32'h30200073) //mret
+                      || (x_inst[31:0] == 32'h7b200073) //dret
                       || (x_inst[31:0] == 32'h10500073) //wfi
 //                      || (x_inst[15:0] == 16'h9002) //c.ebreak
                       || ({x_inst[14:12],x_inst[6:0]} == 10'b001_1110011) //csrrw
